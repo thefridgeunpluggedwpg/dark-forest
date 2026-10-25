@@ -50,4 +50,5 @@ window.addEventListener('error',function(e){show((e.message||e)+' @'+(e.lineno||
 window.addEventListener('unhandledrejection',function(e){show(e.reason&&e.reason.stack||e.reason);});
 setTimeout(function(){if(!(window.DF&&window.DF.ready))show('Game did not finish starting after 15s ('+navigator.userAgent+')');},15000);})();</script>
 <script type="module" src="js/main.js"></script>
+<script>if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{scope:'./'}));</script>
 </body></html>
