@@ -413,7 +413,7 @@ export class Renderer {
   drawPeng(ctx, o, draw, t, night) {
     // Kyler's penguin sprite for every penguin (identical, no variation): side-to-side waddle tilt + tiny step bounce
     const e = o.e, moving = Math.hypot(e.x - e.px, e.z - e.pz) > 0.01, PH = 18, k = this.view.s / P, im = this.pick('penguin', PH * k); if (!im) return;
-    const PW = PH * im.width / im.height, flip = Math.sin(e.dir) < 0 ? 1 : -1 /* penguin art faces left */, ph = (e.walk || 0) * 6 + e.id;
+    const PW = PH * im.width / im.height, flip = Math.sin(e.dir) < 0 ? -1 : 1 /* penguin art: walking left mirrors (original behaviour) */, ph = (e.walk || 0) * 6 + e.id;
     const x = o.x * P, y = (e.rz + 0.35) * P + 1.5, rot = moving ? Math.sin(ph) * 0.13 : Math.sin(t * 1.6 + e.id) * 0.03, hop = moving ? Math.abs(Math.cos(ph)) * 0.7 : 0;
     const st0 = e.state; ctx.save(); ctx.translate(x, y - hop); if (st0 === 'sliding') { ctx.translate(0, -PW * 0.45); ctx.rotate(flip * 1.45); ctx.translate(0, PH * 0.5); } else if (st0 === 'napping') { ctx.translate(0, -2); ctx.rotate(-1.3); ctx.translate(PH * 0.42, 0); } else ctx.rotate(rot); ctx.scale(flip, 1); ctx.drawImage(im, -PW / 2, -PH, PW, PH); ctx.restore();
     if (this.view.s < 10 * this.view.dpr) return;
