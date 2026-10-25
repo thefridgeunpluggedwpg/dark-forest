@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Dark Forest"><meta name="theme-color" content="#100e14"><link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icons/icon-180.png"><link rel="icon" href="icons/icon-192.png">
+<title>Dark Forest v0.2</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="topbar" class="panel open" data-icon="☰">
+    <button class="tab" title="Show top bar">☰</button>
+    <div class="body row">
+      <b class="title">Dark Forest</b>
+      <span id="clock" class="pill">Day 1 06:00</span>
+      <button data-speed="0" title="Pause">⏸</button><button data-speed="1" class="on">1×</button><button data-speed="4">4×</button><button data-speed="16">16×</button>
+      <span class="pill" id="stPop">🐾 0</span><span class="pill" id="stTribes">🏕 0</span><span class="pill" id="stVamps">🧛 0</span><span class="pill" id="stPeng" title="Penguins / mansion bedrooms">🐧 0/10</span><span class="pill dim" id="stFps">-- fps</span>
+      <button id="btnFull" title="Fullscreen">⛶</button>
+      <button class="collapse" title="Collapse">▴</button>
+    </div>
+  </div>
+  <div id="tools" class="panel open" data-icon="🛠">
+    <button class="tab" title="God tools">🛠</button>
+    <div class="body">
+      <div class="hdr">God tools <button class="collapse">◂</button></div>
+      <div class="grid">
+        <button data-mode="select" class="on">👆 Select</button>
+        <button data-mode="spawn">🐣 Spawn</button><button data-mode="spawnP">🐧 Penguin</button><button id="btnTumnus">🧣 Tumnus</button>
+        <button data-mode="drop:berry">🫐 Berries</button><button data-mode="drop:nut">🌰 Nuts</button>
+        <button data-mode="drop:reed">🌾 Reeds</button><button data-mode="drop:stone">🪨 Stone</button>
+        <button data-mode="drop:wood">🪵 Wood</button><button id="btnUnfollow">🎥 Free cam</button><button id="btnLabels" class="on">🗺 Regions</button>
+      </div>
+      <div class="row"><input id="seed" type="number" value="42" aria-label="seed"><button id="btnReset">↻ Reset</button></div>
+      <div class="hint" id="modeHint">Tap a creature to follow it.</div>
+    </div>
+  </div>
+  <div id="log" class="panel open" data-icon="📜">
+    <button class="tab" title="Story log">📜</button>
+    <div class="body"><div class="hdr">Story of the forest <button class="collapse">▸</button></div><div id="logList"></div></div>
+  </div>
+  <div id="insp" class="panel open hidden" data-icon="🔍">
+    <button class="tab" title="Inspector">🔍</button>
+    <div class="body"><div class="hdr"><span id="inspTitle">—</span> <button class="collapse">▾</button></div><div id="inspBody"></div></div>
+  </div>
+</div>
+<button id="hideAll" title="Hide / show all UI">👁</button>
+<div id="rotate"><div>📱↻<br>Rotate your phone to landscape<br><small>Dark Forest plays in landscape</small></div></div>
+<div id="loading"><div class="splashTxt">Dark Forest<small>83 Kingsway awaits…</small></div></div>
+<script>(function(){function show(m){var l=document.getElementById('loading');if(!l)return;var d=document.getElementById('dfErr');if(!d){d=document.createElement('div');d.id='dfErr';d.style.cssText='position:absolute;left:8px;right:8px;bottom:8px;padding:8px;background:#300;color:#fdd;font:12px monospace;white-space:pre-wrap;z-index:99;border:1px solid #f66';l.appendChild(d);}d.textContent+='Error: '+m+'\n';}
+window.addEventListener('error',function(e){show((e.message||e)+' @'+(e.lineno||'')+':'+(e.colno||''));});
+window.addEventListener('unhandledrejection',function(e){show(e.reason&&e.reason.stack||e.reason);});
+setTimeout(function(){if(!(window.DF&&window.DF.ready))show('Game did not finish starting after 15s ('+navigator.userAgent+')');},15000);})();</script>
+<script type="module" src="js/main.js"></script>
+</body></html>
