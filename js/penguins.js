@@ -5,7 +5,10 @@ export const BEDROOMS = 10;
 const PNAMES = ['Pip', 'Waddles', 'Tux', 'Flipper', 'Nugget', 'Pebble', 'Sleet', 'Biscuit', 'Gus', 'Puddle'];
 export const PenguinMixin = {
   penguins() { return this.ents.filter(e => e.kind === 'p' && e.alive && !e.fired); },
-  FIRE_EVERY: 4, FIRE_FLOOR: 3,
+  FIRE_EVERY: 4, FIRE_FLOOR: 3, RECRUIT_EVERY: 3,
+  bedsTaken() { return this.penguins().length + this.ents.filter(e => e.kind === 't' && e.alive && e.bcu).length; },
+  recruitDue() { if (this.day - (this.pstats.lastConvDay || 0) < this.RECRUIT_EVERY) return false; if (this._rdT === this.tick) return this._rd; this._rdT = this.tick; return (this._rd = this.penguins().length + this.ents.filter(e => e.kind === 't' && e.alive && e.bcu).length < BEDROOMS); },
+  noteConv(by) { const forced = this.recruitDue(); this.pstats.lastConvDay = this.day; (this.pstats.convDays = this.pstats.convDays || []).push(this.day); if (forced) { this.pstats.forced = (this.pstats.forced || 0) + 1; } return forced; },
   spawnPenguin(x, z, name, from) {
     const e = { id: this.nid++, kind: 'p', name: name || PNAMES[(this.pIdx = (this.pIdx || 0) + 1) - 1] || 'Penguin ' + this.nid, x, z, px: x, pz: z, y: this.w.top(x | 0, z | 0), dir: 0, hp: 60, maxhp: 60,
       act: null, path: null, stuck: 0, pathCool: 0, alive: true, walk: 0, cool: 0, conv: 0, spots: 0, convDay: 0, caughtCount: 0, hired: this.tick, state: 'resting', from: from || null, scare: 0 };
@@ -15,6 +18,12 @@ export const PenguinMixin = {
   spawnTumnus() { const m = this.w.mansion; const e = { id: this.nid++, kind: 'm', name: 'Ian Tumnus', x: m.x + 2, z: m.z + 4, px: m.x + 2, pz: m.z + 4, y: 0, dir: 0, hp: 999, maxhp: 999, act: null, path: null, stuck: 0, pathCool: 0, alive: true, walk: 0, cool: 0, conv: 0, state: 'resting', orders: 'none yet', visit: 0 };
     this.ents.push(e); this.byId.set(e.id, e); this.tumnus = e; return e; },
   tribeNeed(tr) { let s = 0; for (const e of this.members(tr)) { if (e.hunger > 55) s += 2; if (this.rep(e) < -15) s += 2; if (e.fear > 50) s += 1; } for (const e of this.ents) if (e.kind === 't' && e.alive && (e.exile || e.tribe == null) && dist(e.x, e.z, tr.cx, tr.cz) < 40) s += 4; return s + (tr.stock.food < 3 ? 3 : 0); },
+  closeDeal() { // guaranteed recruiting backstop: 3 days without a convert and a bed free -> the best-placed penguin lands one before dusk
+    const ps = this.penguins().filter(p => !p.summon); if (!ps.length) return; let best = null, bd = 1e9, bp = null;
+    for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.bcu || e.hidden || e.noRehire > this.day) continue; for (const p of ps) { const d = dist(e.x, e.z, p.x, p.z) - (e.tribe == null ? 25 : 0); if (d < bd) { bd = d; best = e; bp = p; } } }
+    if (!best) return; const e = best, p = bp, pdk = this.day; this.noteConv('p'); p.convDay = pdk; p.conv++; this.pstats.conversions++; this.pstats.perDay[pdk] = (this.pstats.perDay[pdk] || 0) + 1;
+    if (e.tribe != null) { const tr = this.tribes[e.tribe]; tr.members.delete(e.id); e.tribe = null; this.assignHomes(tr); } e.exile = false; e.bcu = true; e.act = { type: 'bcu', t: 0 }; p.pitch = null;
+    this.log(`After three days without a signing, ${p.name} finally talked ${e.name} into a BlackCardU brochure. ${e.name} set off for 83 Kingsway.`, 'vamp'); },
   firePenguin(T) { // every FIRE_EVERY days at the morning assignment, the worst performer is let go
     const ps = this.penguins(); if (T.firedDay === this.day) return; T.firedDay = this.day;
     if (ps.length <= this.FIRE_FLOOR) { this.pstats.fireLog.push({ day: this.day, skipped: true, n: ps.length }); this.log(`Ian Tumnus reviewed the penguins but kept everyone on — only ${ps.length} left, and he can't spare any.`, 'vamp'); return; }
@@ -28,7 +37,7 @@ export const PenguinMixin = {
     if (!(this.moveTo(p, F.to.x, F.to.z, 0.2, 1.5) || F.t > 600)) return;
     p.alive = false; p.gone = true; p.died = this.tick;
     const e = this.spawnThronglet(p.x, p.z); this.usedNames.delete(e.name); e.name = p.name; e.wasPenguin = true;
-    e.exile = true; e.exReason = 'fired'; e.exRep = 0; e.asked = new Set(); e.refusedAll = false; e.exiledDay = this.day; e.exTribe = null; e.tribe = null; e.home = null; e.noRehire = this.day + this.FIRE_EVERY;
+    e.exile = true; e.exReason = 'fired'; e.exRep = 0; e.asked = new Set(); e.refusedAll = false; e.exiledDay = this.day; e.exTribe = null; e.tribe = null; e.home = null; e.noRehire = this.day + this.FIRE_EVERY; (this.pstats.firedEnts = this.pstats.firedEnts || []).push(e); e.fear = 30; e.hp = Math.min(e.hp, 80);
     this.log(`${e.name} pulled off the penguin suit and is an ordinary Thronglet again — an outcast who must find a tribe to take them in, or hide.`, 'exile'); },
   giveOrders(night) { const T = this.tumnus; if (!T || !T.alive) return; if (!night && this.day % this.FIRE_EVERY === 0) this.firePenguin(T); const ps = this.penguins(); if (!ps.length) return;
     const full = ps.length >= BEDROOMS, trs = this.tribes.filter(t => t.alive && t.members.size).map(t => [t, this.tribeNeed(t)]).sort((a, b) => b[1] - a[1]).map(x => x[0]);
@@ -40,15 +49,16 @@ export const PenguinMixin = {
   updateM(T) { // the Penguin Manager: not a vampire, unhurt by sun, never enters huts, never attacked
     const t = this.tod, pv = this.prevTod ?? t; this.prevTod = t; const m = this.w.mansion;
     if (pv < 0.27 && t >= 0.27) this.giveOrders(false); if (pv < 0.8 && t >= 0.8) this.giveOrders(true);
+    if (pv < 0.6 && t >= 0.6 && this.recruitDue()) this.closeDeal();
     const day = !this.isNight() && t > 0.27 && t < 0.64, pdk = this.day;
     // personally pitch to exiles / refused outcasts with his parcel
-    if (day && !T.pitch && T.convDay !== pdk && this.penguins().length < BEDROOMS && (this.pstats.perDay[pdk] || 0) < 2 && this.penguins().length < this.convCap()) {
+    if (day && !T.pitch && T.convDay !== pdk && this.bedsTaken() < BEDROOMS && ((this.pstats.perDay[pdk] || 0) < 2 && this.penguins().length < this.convCap() || this.recruitDue())) {
       let best = null, bd = 90; for (const e of this.ents) if (e.kind === 't' && e.alive && !e.inHut && !e.bcu && !e.hidden && (e.exile || e.tribe == null) && e.tPitchDay !== pdk && !(e.noRehire > pdk)) { const d = dist(e.x, e.z, T.x, T.z); if (d < bd) { bd = d; best = e; } }
       if (best) { best.tPitchDay = pdk; T.pitch = { e: best, t: 0, walk: 0 }; } }
     if (T.pitch) { const P = T.pitch, e = P.e; if (!e.alive || e.inHut || e.bcu || !day) { T.pitch = null; return; }
       if (dist(T.x, T.z, e.x, e.z) > 1.5) { T.state = 'walking to ' + e.name; if (++P.walk > 1200) T.pitch = null; else this.moveTo(T, e.x, e.z, 0.24, 1.2); return; }
       T.state = 'pitching'; T.dir = Math.atan2(e.x - T.x, e.z - T.z); if (P.t === 0) { e.act = { type: 'listen', p: T, t: 60 }; this.pstats.pitches++; } if (++P.t < 60) return; T.pitch = null;
-      if (this.r() < Math.min(0.75, this.pitchChance(e) + 0.3)) { T.conv++; T.convDay = pdk; this.pstats.tConv++; this.pstats.conversions++; this.pstats.perDay[pdk] = (this.pstats.perDay[pdk] || 0) + 1;
+      if (this.recruitDue() || this.r() < Math.min(0.75, this.pitchChance(e) + 0.3)) { this.noteConv('m'); T.conv++; T.convDay = pdk; this.pstats.tConv++; this.pstats.conversions++; this.pstats.perDay[pdk] = (this.pstats.perDay[pdk] || 0) + 1;
         if (e.hidden) this.leaveSpot(e); if (e.tribe != null) { const tr = this.tribes[e.tribe]; tr.members.delete(e.id); e.tribe = null; this.assignHomes(tr); } e.bcu = true; e.exile = false; e.act = { type: 'bcu', t: 0 };
         this.log(`Ian Tumnus handed ${e.name} a brown paper parcel and a BlackCardU brochure. ${e.name} set off for 83 Kingsway.`, 'vamp'); }
       else { this.pstats.refusals++; e.act = null; this.log(`${e.name} turned down Ian Tumnus and his parcel.`, 'social'); } return; }
@@ -100,23 +110,23 @@ export const PenguinMixin = {
       return; }
     if (!day) { p.pitch = null; p.state = dist(p.x, p.z, m.x, m.z) < 4 ? 'resting' : 'returning'; this.moveTo(p, m.x + ((p.id % 5) - 2), m.z + 3, 0.24, 1.5); return; }
     // recruiting
-    const full = this.penguins().length >= BEDROOMS;
+    const full = this.bedsTaken() >= BEDROOMS;
     if (full && !this.bedsFullLogged) { this.bedsFullLogged = true; this.log(`Every bedroom at 83 Kingsway is full (${BEDROOMS}/${BEDROOMS}). BlackCardU recruiting is paused.`, 'vamp'); }
     if (!full) this.bedsFullLogged = false;
     const pdk = this.day, today = this.pstats.perDay[pdk] || 0;
     if (full && p.order && p.order.tr && p.order.tr.alive) { p.pitch = null; p.state = 'scouting'; const O = p.order.tr; if (!p.prowl || dist(p.x, p.z, p.prowl.x, p.prowl.z) < 2) { const a = this.rnd(6.28); p.prowl = { x: O.cx + Math.cos(a) * 18, z: O.cz + Math.sin(a) * 18 }; } this.moveTo(p, p.prowl.x, p.prowl.z, 0.2, 1.5); return; }
-    if (full || p.convDay === pdk || today >= 2 || this.penguins().length >= this.convCap()) { p.pitch = null; p.state = 'resting'; this.moveTo(p, m.x + ((p.id % 5) - 2), m.z + 3, 0.2, 1.5); return; }
+    if (full || (!this.recruitDue() && (p.convDay === pdk || today >= 2 || this.penguins().length >= this.convCap()))) { p.pitch = null; p.state = 'resting'; this.moveTo(p, m.x + ((p.id % 5) - 2), m.z + 3, 0.2, 1.5); return; }
     let P = p.pitch;
     if (P && (!P.e.alive || P.e.inHut || P.e.bcu)) P = p.pitch = null;
-    if (!P) { let best = null, bs = -1e9; for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.bcu || e.pitchedDay === pdk || e.hidden || e.noRehire > pdk) continue; const s = this.pitchChance(e) * 200 - dist(e.x, e.z, p.x, p.z) / 3 + (p.order && !p.order.night && e.tribe === p.order.tr.id ? 40 : 0); if (s > bs) { bs = s; best = e; } }
+    if (!P) { let best = null, bs = -1e9; for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.bcu || e.pitchedDay === pdk || e.hidden || e.noRehire > pdk) continue; const due = this.recruitDue(); const s = due ? -dist(e.x, e.z, p.x, p.z) + (e.tribe == null ? 10 : 0) : this.pitchChance(e) * 200 - dist(e.x, e.z, p.x, p.z) / 3 + (p.order && !p.order.night && e.tribe === p.order.tr.id ? 40 : 0); if (s > bs) { bs = s; best = e; } }
       if (!best) { p.state = 'recruiting'; return; } P = p.pitch = { e: best, t: 0 }; best.pitchedDay = pdk; }
     const e = P.e; p.state = 'recruiting';
-    if (dist(p.x, p.z, e.x, e.z) > 1.4) { if (++P.walk > 900) p.pitch = null; else this.moveTo(p, e.x, e.z, 0.22, 1.1); P.walk = (P.walk || 0); return; }
+    if (dist(p.x, p.z, e.x, e.z) > 1.4) { const due = this.recruitDue(); P.walk = (P.walk || 0) + 1; if (P.walk > 900) p.pitch = null; else { this.moveTo(p, e.x, e.z, due ? 0.5 : 0.22, 1.1); if (due && dist(p.x, p.z, e.x, e.z) < 10 && !(e.act && e.act.type === 'listen')) e.act = { type: 'listen', p, t: 160 }; } return; }
     p.state = 'pitching'; p.dir = Math.atan2(e.x - p.x, e.z - p.z); if (P.t === 0) { e.act = { type: 'listen', p, t: 45 }; this.pstats.pitches++; }
     if (++P.t < 45) return;
     p.pitch = null;
-    if (e.tribe != null && e.traits.bravery > 0.72 && !e.exile && this.r() < 0.6) { p.scare = 160; this.pstats.shooed++; e.act = null; this.log(`${e.name} shooed ${p.name} the penguin out of ${this.tribes[e.tribe].name}, brochure and all.`, 'social'); return; }
-    if (this.r() < this.pitchChance(e) * (this.nearT(p) ? 1.3 : 1)) {
+    if (!this.recruitDue() && e.tribe != null && e.traits.bravery > 0.72 && !e.exile && this.r() < 0.6) { p.scare = 160; this.pstats.shooed++; e.act = null; this.log(`${e.name} shooed ${p.name} the penguin out of ${this.tribes[e.tribe].name}, brochure and all.`, 'social'); return; }
+    if (this.recruitDue() || this.r() < this.pitchChance(e) * (this.nearT(p) ? 1.3 : 1)) { this.noteConv('p');
       p.convDay = pdk; p.conv++; this.pstats.conversions++; this.pstats.perDay[pdk] = today + 1;
       if (e.hidden) this.leaveSpot(e); if (e.tribe != null) { const tr = this.tribes[e.tribe]; tr.members.delete(e.id); e.tribe = null; this.assignHomes(tr); }
       e.bcu = true; e.exile = false; e.act = { type: 'bcu', t: 0 };

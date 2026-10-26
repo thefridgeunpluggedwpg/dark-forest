@@ -9,6 +9,7 @@ const TRIBE_NAMES = ['Mossbrook', 'Oakhollow', 'Fernreach', 'Ashgrove', 'Thornwi
 const TRIBE_COLORS = [0x6fc3ff, 0xffb04a, 0x9be26a, 0xe27adf, 0xfff06a, 0xff6a6a, 0x6affd8, 0xc0a0ff, 0xffffff, 0xa0ff40];
 const VAMP_NAMES = ['Stefan', 'Vlad', 'Carmilla', 'Lucian', 'Mircea', 'Elisabeta', 'Dracul', 'Ilona', 'Radu', 'Mina', 'Bathory', 'Anca'];
 export const VAMP_CAP = 12;
+export const SHADE_R = 12; // v0.9: the mansion's shadow — vampires are sun-immune within this radius of 83 Kingsway's centre
 const HUT_SLOTS = 8, RING_R = 11;
 const dist = (a, b, c, d) => Math.hypot(a - c, b - d);
 
@@ -34,6 +35,9 @@ export class Sim {
   threat() { return Math.min(1, Math.max(0, (this.day - 1) / 24)); }
   ease() { const n = this.thronglets().length; return n < 14 ? 0.25 : n < 24 ? 0.55 : n < 34 ? 0.8 : 1; }
   vampName() { if (this.vampIdx < VAMP_NAMES.length) return VAMP_NAMES[this.vampIdx++]; const used = new Set(this.vamps().map(v => v.name)); for (let k = 2; k < 20; k++) for (const n of VAMP_NAMES.slice(1)) { const c = n + ' ' + ['II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][Math.min(8, k - 2)]; if (!used.has(c)) return c; } return 'Vampire ' + this.nid; }
+  get SHADE_R() { return SHADE_R; }
+  inShade(x, z) { const m = this.w.mansion; return dist(x, z, m.x, m.z) < SHADE_R; }
+  vampNight() { const t = this.tod; return t < 0.22 || t > 0.72; } // vampires leave right at dusk
   isNight() { const t = this.tod; return t < 0.22 || t > 0.78; }
   dayAmt() { const t = this.tod, s = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); }; return s(0.18, 0.3, t) * (1 - s(0.7, 0.82, t)); }
   stamp() { return (this.isNight() ? 'Night ' : 'Day ') + this.day; }
@@ -379,7 +383,8 @@ export class Sim {
       if (v) {
         e.fear = Math.min(100, e.fear + 15);
         const al = this.allies(e, 6);
-        if (e.traits.bravery > 0.62 && al >= 2 && e.hp > 40) { if (!e.act || e.act.type !== 'fight') { e.act = { type: 'fight', v }; } }
+        const mateHit = v.assign && v.assign.type === 'hunt' && v.assign.e !== e && v.assign.e.tribe != null && v.assign.e.tribe === e.tribe && dist(v.assign.e.x, v.assign.e.z, e.x, e.z) < 7;
+        if (e.hp > 40 && ((e.traits.bravery > 0.5 && al >= 1) || (mateHit && e.traits.bravery > 0.35)) && (e.act && e.act.type === 'fight' || this.r() < 0.5)) { if (!e.act || e.act.type !== 'fight') this.stats.fights = (this.stats.fights || 0) + 1; if (!e.act || e.act.type !== 'fight') { e.act = { type: 'fight', v }; } }
         else if (!e.act || e.act.type !== 'flee') {
           // abandoning a tribemate who is being attacked?
           if (e.tribe != null) for (const o of this.ents) if (o.kind === 't' && o.alive && o !== e && o.tribe === e.tribe && o.attackedBy && this.tick - o.attackedAt < 20 && dist(o.x, o.z, e.x, e.z) < 7 && e.traits.bravery < 0.45) {
@@ -578,7 +583,8 @@ export class Sim {
       case 'wander': if (this.moveTo(e, a.x, a.z, sp * 0.8) || --a.t <= 0) e.act = null; break;
       case 'fight': {
         const v = a.v; if (!v.alive || v.state === 'resting' || e.hp < 30) { e.act = null; break; }
-        if (this.moveTo(e, v.x, v.z, 0.24, 1.1)) { if (e.cool > 0) break; e.cool = 6; v.hp -= (4 + e.traits.bravery * 3) * (1 - 0.4 * this.threat()); e.fightLogged = e.fightLogged || 0;
+        if (this.moveTo(e, v.x, v.z, 0.24, 1.1)) { if (e.cool > 0) break; e.cool = 6; v.hp -= (4 + e.traits.bravery * 3) * (1 - 0.4 * this.threat()); { const nf = this.ents.filter(o => o.kind === 't' && o.alive && o.act && o.act.type === 'fight' && o.act.v === v).length;
+            if (v.hp > 0 && nf >= 2 && this.r() < 0.012 * nf) { v.state = 'retreat'; v.assign = null; this.stats.drivenOff = (this.stats.drivenOff || 0) + 1; this.log(`${e.name} and ${nf - 1} other${nf > 2 ? 's' : ''} from ${tr ? tr.name : 'the outcasts'} drove ${v.name} off into the night!`, 'fight'); e.act = null; break; } } e.fightLogged = e.fightLogged || 0;
           if (!this.huntLogged.has('def' + v.id)) { this.huntLogged.add('def' + v.id); this.witness(e, 'defend', +10, 10); this.log(`${e.name} stood and fought ${v.name}!`, 'fight'); }
           if (v.hp <= 0) { if (this.r() < 0.12 * (1 - 0.5 * this.threat())) this.die(v, `${v.name} was destroyed by ${e.name} and the ${tr ? tr.name : 'outcasts'}!`); else { v.hp = 30; v.state = 'retreat'; v.assign = null; this.stats.drivenOff = (this.stats.drivenOff || 0) + 1; this.log(`${e.name} and the ${tr ? tr.name : 'outcasts'} drove ${v.name} off into the night!`, 'fight'); } e.act = null; } }
         break; }
@@ -587,7 +593,7 @@ export class Sim {
   }
   // ---------- Vampire AI ----------
   vampPlan() {
-    if (!this.isNight()) return;
+    if (!this.vampNight()) return;
     const vs = this.vamps().filter(v => v.hp > 45 && v.state !== 'retreat'); if (!vs.length) return;
     this.detectHidden(vs);
     const targets = this.thronglets().filter(e => !e.bcu && !e.inHut && !this.safeAt(e.x, e.z) && !e.hidden && !(e.swim && e.act && e.act.sp && dist(e.x, e.z, e.act.sp.x, e.act.sp.z) < 8));
@@ -651,11 +657,11 @@ export class Sim {
   leaveSpot(e) { if (e.hidden) e.hidden.occ.delete(e.id); e.hidden = null; }
   detectHidden(vs) {
     for (const e of this.ents) { if (!e.alive || e.kind !== 't' || !e.hidden) continue; const sp = e.hidden;
-      for (const v of vs) { const d = dist(v.x, v.z, e.x, e.z); if (d > 8) continue;
+      for (const v of vs) { const d = dist(v.x, v.z, e.x, e.z), DR = 8 + 4 * this.threat(); if (d > DR) continue;
         const noise = 0.25 + (e.fear > 60 ? 0.45 : e.fear > 30 ? 0.2 : 0) + (sp.occ.size > 2 ? 0.15 : 0);
-        const p = (1 - sp.conceal) * (1 - d / 8) * noise * (this.storm ? 0.55 : 1) * 1.6;
+        const p = (1 - sp.conceal) * (1 - d / DR) * noise * (this.storm ? 0.55 : 1) * 1.6;
         if (this.r() < p) { this.leaveSpot(e); e.act = { type: 'flee', x: e.x + this.rnd(-10, 10), z: e.z + this.rnd(-10, 10), t: 25 }; this.stats.found = (this.stats.found || 0) + 1;
-          this.log(`${v.name} heard ${e.fear > 60 ? 'the panicked breathing of ' : 'a rustle — '}${e.exile ? 'exile ' : ''}${e.name}, flushed from the ${sp.label} in ${sp.region}!`, 'vamp'); v.assign = { type: 'hunt', e, fx: 0, fz: 0 }; break; }
+          this.log(`${v.name} heard ${e.fear > 60 ? 'the panicked breathing of ' : 'a rustle — '}${e.exile ? 'exile ' : ''}${e.name}, flushed from the ${sp.label} in ${sp.region}!`, 'vamp'); v.assign = { type: 'hunt', e, fx: 0, fz: 0 }; for (const o of vs) if (o !== v && !(o.assign && o.assign.type === 'hunt' && o.assign.e.alive) && dist(o.x, o.z, e.x, e.z) < 30) o.assign = { type: 'hunt', e, fx: this.rnd(-6, 6), fz: this.rnd(-6, 6) }; break; }
         if (d < 3.6 && (!e.nearMiss || d < e.nearMiss.d)) e.nearMiss = { v: v.name, d: Math.max(1, Math.round(d)) };
       } }
   }
@@ -663,13 +669,19 @@ export class Sim {
     if (this.safeAt(nx, nz) && !this.safeAt(v.x, v.z)) { v.bat = false; return this.moveTo(v, tx, tz, 0.4); }
     v.bat = true; v.x = Math.max(1, Math.min(W - 2, nx)); v.z = Math.max(1, Math.min(D - 2, nz)); v.dir = Math.atan2(dx, dz); v.walk += k; v.path = null; return d < 1; }
   updateV(v) {
-    const m = this.w.mansion, tod = this.tod, night = this.isNight() && !(tod > 0.14 + 0.04 * this.threat() && tod < 0.5);
+    const m = this.w.mansion, tod = this.tod, night = this.vampNight() && !(tod > 0.15 + 0.04 * this.threat() && tod < 0.5);
     if (v.cool > 0) v.cool--;
     if (!night || v.hp < 45 || v.state === 'retreat') {
       if (v.hp < 45 && night && v.state !== 'retreat') { v.state = 'retreat'; this.log(`${v.name}, wounded, fled back to 83 Kingsway.`, 'fight'); }
-      const home = dist(v.x, v.z, m.x, m.z) < 3;
-      if (!home) { if (dist(v.x, v.z, m.x, m.z) > 20) this.fly(v, m.x, m.z, 1.5); else { v.bat = false; this.moveTo(v, m.x, m.z, 0.42, 1.5); } if (this.dayAmt() > 0.25) { v.hp -= 0.6; if (v.hp <= 0) return this.die(v, `${v.name} was caught by the sunrise and burned to ash.`); } v.state = v.state === 'retreat' ? 'retreat' : 'returning'; }
-      else { v.bat = false; v.state = 'resting'; v.hp = Math.min(v.maxhp, v.hp + 0.15); if (v.hp > v.maxhp * 0.8 && night) v.state = 'prowl'; }
+      const shade = this.inShade(v.x, v.z), dawn = !night && this.dayAmt() > 0.02, home = dist(v.x, v.z, m.x, m.z) < 3 || (shade && !night && v.hp >= 45 && v.state !== 'retreat') || (shade && dawn);
+      if (!home) { const sp = dawn ? 1.9 : 1.5; if (dist(v.x, v.z, m.x, m.z) > 14) this.fly(v, m.x, m.z, sp); else { v.bat = false; this.moveTo(v, m.x, m.z, dawn ? 0.55 : 0.42, 1.5); }
+        if (dawn && !v.rushLogged) { v.rushLogged = this.day; this.log(`Dawn caught ${v.name} out — rushing for the shadow of 83 Kingsway.`, 'vamp'); }
+        if (this.dayAmt() > 0.25 && !shade) { v.hp -= 0.6; if (v.hp <= 0) return this.die(v, `${v.name} was caught by the sunrise and burned to ash.`); } v.state = v.state === 'retreat' ? 'retreat' : 'returning'; }
+      else { if (v.rushLogged && v.rushLogged === this.day && !v.shadeLogged) { v.shadeLogged = this.day; this.log(`${v.name} reached the mansion's shadow — safe from the sun.`, 'vamp'); }
+        v.bat = false; v.state = shade && !night && dist(v.x, v.z, m.x, m.z) >= 3 ? 'loitering' : 'resting'; v.hp = Math.min(v.maxhp, v.hp + 0.15);
+        if (!night && (this.tick + v.id) % 400 === 0) { const a = this.rnd(6.28), r = 4 + this.rnd(SHADE_R - 5.5); v.loiter = { x: m.x + Math.cos(a) * r, z: m.z + Math.sin(a) * r }; }
+        if (!night && v.loiter && this.inShade(v.loiter.x, v.loiter.z)) { if (this.moveTo(v, v.loiter.x, v.loiter.z, 0.12, 0.8)) v.loiter = null; }
+        if (v.hp > v.maxhp * 0.8 && night) v.state = 'prowl'; }
       return;
     }
     if (v.state === 'resting') v.state = 'prowl';
@@ -679,9 +691,9 @@ export class Sim {
     if (as && as.type === 'hunt' && as.e.alive && !as.e.hidden && !this.safeAt(as.e.x, as.e.z)) {
       const e = as.e, d = dist(v.x, v.z, e.x, e.z); v.state = 'hunting';
       let tx = e.x, tz = e.z; if ((as.fx || as.fz) && d > 4) { tx += as.fx; tz += as.fz; if (dist(v.x, v.z, tx, tz) < 2.5) { as.fx = as.fz = 0; } }
-      if (d > 18 ? (this.fly(v, tx, tz, 1.0), false) : (v.bat = false, this.moveTo(v, tx, tz, 0.4, 1.0) && d < 1.3)) {
+      if (d > 18 ? (this.fly(v, tx, tz, 1.25 + 0.25 * this.threat()), false) : (v.bat = false, this.moveTo(v, tx, tz, 0.47 + 0.08 * this.threat() * this.ease(), 1.0) && d < 1.3)) {
         if (v.cool > 0) return; v.cool = 6;
-        e.hp -= (24 + 12 * this.threat()) * (0.6 + 0.4 * this.ease()); e.fear = 100; e.attackedBy = v.name; e.attackedAt = this.tick; this.stats.attacks++;
+        e.hp -= (30 + 18 * this.threat()) * (0.5 + 0.5 * this.ease()); e.fear = 100; e.attackedBy = v.name; e.attackedAt = this.tick; this.stats.attacks++;
         const pack = this.vamps().filter(o => dist(o.x, o.z, e.x, e.z) < 5);
         if (!this.huntLogged.has('a' + e.id)) { this.huntLogged.add('a' + e.id); this.log(pack.length > 1 ? `${pack.map(o => o.name).join(' and ')} cornered ${e.exile ? 'exile ' : ''}${e.name} ${this.placeName(e.x, e.z)}.` : `${v.name} sank fangs into ${e.exile ? 'exile ' : ''}${e.name} ${this.placeName(e.x, e.z)}.`, 'vamp'); }
         if (e.hp <= 0) { this.die(e, `${e.name}${e.exile ? ', the exile,' : ''} was drained by ${v.name}.`, v);
@@ -699,9 +711,9 @@ export class Sim {
       if (gate && gate.open > 0 && dist(v.x, v.z, g.x + .5, g.z + .5) < 4) { this.moveTo(v, as.tr.cx, as.tr.cz, 0.34, 1); if (!as.slipped) { as.slipped = true; as.tr.wall.breached = true; this.log(`A gate of ${as.tr.name} swung open — ${v.name} slipped inside the walls!`, 'vamp'); } return; }
       if (as.slipped && this.insideRing(as.tr, v.x, v.z)) { v.assign = null; return; }
       if (this.moveTo(v, as.x, as.z, 0.3, 1.2)) {
-        if (++as.wait > Math.max(30, 90 - 60 * this.threat())) { // breach: tear at the nearest wall block
-          let best = null, bd = 4; const gatesOk = this.day >= 6; for (const c of as.tr.wall.cells) { if (c.gate && !gatesOk) continue; const d = dist(c.x + .5, c.z + .5, v.x, v.z); if (d < bd) { bd = d; best = c; } }
-          if (best && v.cool <= 0) { v.cool = Math.round((as.tr.wall.level >= 2 ? 50 : 28) * (1 - 0.5 * this.threat())); if (best.gate) { this.stats.gateHits = (this.stats.gateHits || 0) + 1; if (!as.gateLogged) { as.gateLogged = true; this.log(`${v.name} is battering the gate of ${as.tr.name}!`, 'vamp'); } } const gy = this.w.ground[best.z * W + best.x]; for (let y = gy + 3; y >= gy; y--) { if (this.w.get(best.x, y, best.z)) { this.w.set(best.x, y, best.z, 0); break; } }
+        if (++as.wait > Math.max(20, 70 - 50 * this.threat())) { // breach: tear at the nearest wall block
+          let best = null, bd = 4; const gatesOk = this.day >= 3; for (const c of as.tr.wall.cells) { if (c.gate && !gatesOk) continue; const d = dist(c.x + .5, c.z + .5, v.x, v.z); if (d < bd) { bd = d; best = c; } }
+          if (best && v.cool <= 0) { v.cool = Math.round((as.tr.wall.level >= 2 ? 40 : 22) * (1 - 0.5 * this.threat())); if (best.gate) { this.stats.gateHits = (this.stats.gateHits || 0) + 1; if (!as.gateLogged) { as.gateLogged = true; this.log(`${v.name} is battering the gate of ${as.tr.name}!`, 'vamp'); } } const gy = this.w.ground[best.z * W + best.x]; for (let y = gy + 3; y >= gy; y--) { if (this.w.get(best.x, y, best.z)) { this.w.set(best.x, y, best.z, 0); break; } }
             if (this.w.stack[best.z * W + best.x] <= 1 && !as.tr.wall.breached) { as.tr.wall.breached = true; this.stats.breaches++; this.log(`${v.name} tore a breach in the ${as.tr.name} wall!`, 'vamp'); v.assign = null; } }
         }
       }
