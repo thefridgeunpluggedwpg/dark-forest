@@ -23,7 +23,7 @@ export const PenguinMixin = {
     for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.bcu || e.hidden || e.noRehire > this.day) continue; for (const p of ps) { const d = dist(e.x, e.z, p.x, p.z) - (e.tribe == null ? 25 : 0); if (d < bd) { bd = d; best = e; bp = p; } } }
     if (!best) return; const e = best, p = bp, pdk = this.day; this.noteConv('p'); p.convDay = pdk; p.conv++; this.pstats.conversions++; this.pstats.perDay[pdk] = (this.pstats.perDay[pdk] || 0) + 1;
     if (e.tribe != null) { const tr = this.tribes[e.tribe]; tr.members.delete(e.id); e.tribe = null; this.assignHomes(tr); } e.exile = false; e.bcu = true; e.act = { type: 'bcu', t: 0 }; p.pitch = null;
-    this.log(`After three days without a signing, ${p.name} finally talked ${e.name} into a BlackCardU brochure. ${e.name} set off for 83 Kingsway.`, 'vamp'); },
+    this.log(`After three days without a signing, ${p.name} finally talked ${e.name}${this.ofV(e)} into a BlackCardU brochure. ${e.name} set off for 83 Kingsway.`, 'vamp'); },
   firePenguin(T) { // every FIRE_EVERY days at the morning assignment, the worst performer is let go
     const ps = this.penguins(); if (T.firedDay === this.day) return; T.firedDay = this.day;
     if (ps.length <= this.FIRE_FLOOR) { this.pstats.fireLog.push({ day: this.day, skipped: true, n: ps.length }); this.log(`Ian Tumnus reviewed the penguins but kept everyone on — only ${ps.length} left, and he can't spare any.`, 'vamp'); return; }
@@ -60,13 +60,13 @@ export const PenguinMixin = {
       T.state = 'pitching'; T.dir = Math.atan2(e.x - T.x, e.z - T.z); if (P.t === 0) { e.act = { type: 'listen', p: T, t: 60 }; this.pstats.pitches++; } if (++P.t < 60) return; T.pitch = null;
       if (this.recruitDue() || this.r() < Math.min(0.75, this.pitchChance(e) + 0.3)) { this.noteConv('m'); T.conv++; T.convDay = pdk; this.pstats.tConv++; this.pstats.conversions++; this.pstats.perDay[pdk] = (this.pstats.perDay[pdk] || 0) + 1;
         if (e.hidden) this.leaveSpot(e); if (e.tribe != null) { const tr = this.tribes[e.tribe]; tr.members.delete(e.id); e.tribe = null; this.assignHomes(tr); } e.bcu = true; e.exile = false; e.act = { type: 'bcu', t: 0 };
-        this.log(`Ian Tumnus handed ${e.name} a brown paper parcel and a BlackCardU brochure. ${e.name} set off for 83 Kingsway.`, 'vamp'); }
+        this.log(`Ian Tumnus handed ${e.name}${this.ofV(e)} a brown paper parcel and a BlackCardU brochure. ${e.name} set off for 83 Kingsway.`, 'vamp'); }
       else { this.pstats.refusals++; e.act = null; this.log(`${e.name} turned down Ian Tumnus and his parcel.`, 'social'); } return; }
     // snitching: catch slacking penguins and Thronglets outside at night
     if ((this.tick + T.id) % 8 === 0) { for (const p of this.penguins()) if (p.slack && dist(p.x, p.z, T.x, T.z) < 10) this.catchSlacker(T, p);
       if (this.isNight() && !(T.cool > this.tick)) for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.bcu || this.safeAt(e.x, e.z) || dist(e.x, e.z, T.x, T.z) > 11) continue; if (e.hidden && this.r() > (1 - e.hidden.conceal) * 0.3) continue;
         const v = this.vamps().filter(v => v.hp > 45 && v.state !== 'retreat').sort((a, b) => dist(a.x, a.z, e.x, e.z) - dist(b.x, b.z, e.x, e.z))[0]; if (!v) break; v.assign = { type: 'hunt', e, fx: 0, fz: 0 }; e.spottedAt = this.tick; T.cool = this.tick + 300; T.snitches = (T.snitches || 0) + 1; T.snitchAt = this.tick; this.pstats.snitchSpots++; v.alert = this.tick;
-        this.log(`Ian Tumnus spotted ${e.exile ? 'exile ' : ''}${e.name} ${this.placeName(e.x, e.z)} on his rounds and snitched to ${v.name}.`, 'vamp'); break; } }
+        this.log(`Ian Tumnus spotted ${e.exile ? 'exile ' : ''}${e.name}${this.ofV(e)} ${this.placeName(e.x, e.z)} on his rounds and snitched to ${v.name}.`, 'vamp'); break; } }
     // inspection trip into the field (after every 2 parade loops)
     if (T.insp) { const p = T.insp.p; if (!p.alive || ++T.insp.t > 1100 || dist(p.x, p.z, m.x, m.z) < 10) { T.insp = null; } else { T.state = 'inspecting ' + p.name; if (this.moveTo(T, p.x + 1, p.z, 0.26, 2) || dist(T.x, T.z, p.x, p.z) < 2.5) { if ((T.vt = (T.vt || 0) + 1) > 50) { T.vt = 0; T.insp = null; } } return; } }
     // default: parade the 83 Kingsway grounds in a loop (gardens, gate, perimeter)
@@ -106,7 +106,7 @@ export const PenguinMixin = {
         if (e.hidden && this.r() > (1 - e.hidden.conceal) * (this.nearT(p) ? 0.32 : 0.25) * (this.storm ? 0.5 : 1)) continue; // well hidden: unseen
         const vs2 = this.vamps().filter(v => v.hp > 45 && v.state !== 'retreat' && !(v.assign && v.assign.type === 'hunt' && v.assign.e.alive)); const v = vs2.sort((a, b) => dist(a.x, a.z, e.x, e.z) - dist(b.x, b.z, e.x, e.z))[0] || this.vamps()[0]; if (!v) break;
         v.assign = { type: 'hunt', e, fx: 0, fz: 0 }; e.spottedAt = this.tick; e.spottedBy = p.name; p.spots++; this.pstats.spots++; p.cool = 250; p.sig = { t: 30 };
-        this.log(`A penguin, ${p.name}, spotted ${e.exile ? 'exile ' : ''}${e.name} ${this.placeName(e.x, e.z)} and flapped for ${v.name}.`, 'vamp'); break; }
+        this.log(`A penguin, ${p.name}, spotted ${e.exile ? 'exile ' : ''}${e.name}${this.ofV(e)} ${this.placeName(e.x, e.z)} and flapped for ${v.name}.`, 'vamp'); break; }
       return; }
     if (!day) { p.pitch = null; p.state = dist(p.x, p.z, m.x, m.z) < 4 ? 'resting' : 'returning'; this.moveTo(p, m.x + ((p.id % 5) - 2), m.z + 3, 0.24, 1.5); return; }
     // recruiting
@@ -130,11 +130,11 @@ export const PenguinMixin = {
       p.convDay = pdk; p.conv++; this.pstats.conversions++; this.pstats.perDay[pdk] = today + 1;
       if (e.hidden) this.leaveSpot(e); if (e.tribe != null) { const tr = this.tribes[e.tribe]; tr.members.delete(e.id); e.tribe = null; this.assignHomes(tr); }
       e.bcu = true; e.exile = false; e.act = { type: 'bcu', t: 0 };
-      this.log(`${e.name} accepted a BlackCardU brochure from ${p.name} and set off for 83 Kingsway.`, 'vamp');
+      this.log(`${e.name}${this.ofV(e)} accepted a BlackCardU brochure from ${p.name} and set off for 83 Kingsway.`, 'vamp');
     } else { this.pstats.refusals++; e.act = null; }
   },
   bcuWalk(e) { const m = this.w.mansion, a = e.act; e.state = 'toMansion';
     if (this.moveTo(e, m.x, m.z + 3, 0.22, 1.6) || dist(e.x, e.z, m.x, m.z + 3) < 2.5 || ++a.t > 1500) {
       e.alive = false; e.died = this.tick; e.gone = true; const p = this.spawnPenguin(m.x + this.rnd(-2, 2), m.z + 3, e.name, e.name); p.conv = 0;
-      this.log(`${e.name} accepted a BlackCardU brochure and waddled off to 83 Kingsway as a penguin. (${this.penguins().length}/${BEDROOMS} bedrooms)`, 'vamp'); } },
+      this.log(`${e.name}${this.ofV(e)} accepted a BlackCardU brochure and waddled off to 83 Kingsway as a penguin. (${this.penguins().length}/${BEDROOMS} bedrooms)`, 'vamp'); } },
 };

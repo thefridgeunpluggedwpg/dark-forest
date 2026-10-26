@@ -2,7 +2,8 @@
 import { W, D, WATER, CH, NC, B, RG, REGION_NAMES } from './world.js';
 // v0.10: bat-form sprite hook. null = the code-drawn bigBat() from art.js (shipping default).
 // To swap in an image (e.g. a painted bat), set this to its path, e.g. 'assets/bat.png'.
-export const BAT_SPRITE = null;
+// v0.11: Kyler's approved 2-frame sheet (left half = wings up, right half = wings down). null = code-drawn bigBat().
+export const BAT_SPRITE = 'assets/bat-flap.png';
 import * as A from './art.js';
 import * as K from './kingsway.js';
 const { P, cv, hash, vnoise } = A;
@@ -222,7 +223,7 @@ export class Renderer {
       for (const f of tr.farms) for (const [fx, fz] of f.cells) if (inV(fx, fz)) { for (const [dx, dz, hz] of [[0, -1, 1], [0, 1, 1], [-1, 0, 0], [1, 0, 0]]) { if (f.cells.some(([a, b]) => a === fx + dx && b === fz + dz)) continue; list.push({ t: 'rail', x: fx + 0.5 + dx * 0.5, z: fz + 0.5 + dz * 0.5 + (dz > 0 ? 0.02 : 0), hz }); } }
     }
     const M = this.M; if (inV(M.cx, M.cz, 30)) list.push({ t: 'mansion', x: M.cx, z: M.z1 + 1 });
-    for (const e of sim.ents) { if (!e.alive && !(e.died && sim.tick - e.died < 30)) continue; const x = e.px + (e.x - e.px) * alpha, z = e.pz + (e.z - e.pz) * alpha; e.rx = x; e.rz = z; if (!inV(x, z) || e.inHut) continue; if (e.kind === 'v' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z) < 4) continue; if (e.kind === 'p' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z - 3) < 4 && sim.isNight() === false && sim.tod > 0.64) continue; list.push({ t: e.kind === 'v' ? 'vamp' : e.kind === 'p' ? 'peng' : e.kind === 'm' ? 'tum' : 'thr', x, z: z + 0.3, e }); }
+    for (const e of sim.ents) { if (!e.alive && !(e.died && sim.tick - e.died < 30)) continue; if (e.inMansion) continue; const x = e.px + (e.x - e.px) * alpha, z = e.pz + (e.z - e.pz) * alpha; e.rx = x; e.rz = z; if (!inV(x, z) || e.inHut) continue; if (e.kind === 'v' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z) < 4) continue; if (e.kind === 'p' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z - 3) < 4 && sim.isNight() === false && sim.tod > 0.64) continue; list.push({ t: e.kind === 'v' ? 'vamp' : e.kind === 'p' ? 'peng' : e.kind === 'm' ? 'tum' : 'thr', x, z: z + 0.3, e }); }
     if (far) { const keep = new Set(['hut', 'hideout', 'mansion', 'wall', 'gate', 'vamp', 'thr', 'peng', 'tum', 'fire', 'tree', 'dead']); for (let i = list.length - 1; i >= 0; i--) if (!keep.has(list[i].t) || (list[i].t === 'tree' || list[i].t === 'dead') && cam.scale < 3) { list[i] = list[list.length - 1]; list.pop(); } }
     list.sort((a, b) => a.z - b.z);
     // ---------- v0.9: the mansion's shadow (vampire sun-immunity zone), shown by day ----------
@@ -300,6 +301,9 @@ export class Renderer {
     for (const [X, Y, n] of this.hutTags) { const zz = Math.sin(t * 2 + X) * 1.5; ctx.font = 'bold 6px monospace'; ctx.textAlign = 'center'; ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(20,12,6,0.85)';
       const txt = 'zZ ' + n; ctx.strokeText(txt, X, Y + zz); ctx.fillStyle = '#fff2c0'; ctx.fillText(txt, X, Y + zz); }
     for (const [X, Y, VW, fl] of this.eyes) { ctx.fillStyle = '#ff2a2a'; for (const ex of [0.455, 0.51]) ctx.fillRect(X + (ex - 0.5) * VW * fl - 0.5, Y - 0.3, 1, 0.7); }
+    // v0.11: village names over each village when zoomed in; a small shield pip over guards
+    if (k > 1.2) { ctx.textAlign = 'center'; ctx.font = 'bold 9px "Pixelify Sans", monospace'; for (const tr of sim.tribes) { if (!tr.alive) continue; const X = tr.cx * P, Y = tr.cz * P - 30; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,12,6,0.85)'; ctx.strokeText(tr.name, X, Y); ctx.fillStyle = '#fff2c0'; ctx.fillText(tr.name, X, Y); } }
+    for (const e of sim.ents) if (e.kind === 't' && e.alive && e.guardOf != null && !e.inHut && !e.hidden) { const X = e.x * P, Y = e.z * P - 17; ctx.fillStyle = 'rgba(30,20,10,0.8)'; ctx.fillRect(X - 2.5, Y - 3, 5, 5); ctx.fillStyle = '#c9d4e0'; ctx.fillRect(X - 1.5, Y - 2, 3, 2.5); ctx.fillRect(X - 0.5, Y + 0.5, 1, 1); }
     // ---------- storm: clouds, rain, lightning (concentrated around 83 Kingsway) ----------
     if (sim.storm && night > 0.3) { const I = clamp(1.15 - mansD / 160, 0.35, 1) * Math.min(1, night * 1.5);
       ctx.setTransform(k, 0, 0, k, ox, oy); ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = 0.45 * I; ctx.globalCompositeOperation = 'multiply'; const cp = ctx.createPattern(this.fogTex, 'repeat'); cp.setTransform(new DOMMatrix().scaleSelf(22, 22).translateSelf((t * 1.1) % 96, (t * 0.4) % 96)); ctx.fillStyle = cp; ctx.filter = 'none'; ctx.fillRect(ax0, az0, aw, ah); ctx.restore();
@@ -446,11 +450,11 @@ export class Renderer {
     if (e.hideout) { // asleep inside a hideout: two red eyes glinting in the dark mouth + z bubble
       if (Math.floor(t * 0.7 + e.id) % 5) { ctx.fillStyle = '#ff3030'; const X = Math.round(o.x * P) + (e.id % 3) * 2 - 2, Y = Math.round((e.rz - 0.35) * P); ctx.fillRect(X - 2, Y, 1, 1); ctx.fillRect(X + 1, Y, 1, 1); glow.push([o.x, e.rz - 0.35, 0.5, 'red']); }
       if (this.view.s >= 10 * this.view.dpr) draw(this.S('bubz', () => A.bubble('z')), o.x + 0.6, e.rz - 1.2 + Math.sin(t * 2) * 0.05, 0.5, 1); return; }
-    if (e.batHome) { const by = e.rz - 1.6 + Math.sin(t * 6 + e.id) * 0.12;
+    if (e.batHome || e.raidFly) { const by = e.rz - 1.6 + Math.sin(t * 6 + e.id) * 0.12;
       if (BAT_SPRITE && !this.batImg) { this.batImg = new Image(); this.batImg.src = BAT_SPRITE; }
-      if (this.batImg && this.batImg.complete && this.batImg.naturalWidth) { // swappable bat asset: flap = 4-frame wing squash, nearest-neighbour
-        const f = Math.floor(t * 12 + e.id) % 4, sy = [1, 0.55, 0.2, 0.55][f], sx = [1, 0.92, 0.85, 0.92][f], bw = 24, bh = bw * this.batImg.naturalHeight / this.batImg.naturalWidth, flip = Math.sin(e.dir) < 0 ? -1 : 1;
-        ctx.save(); ctx.imageSmoothingEnabled = false; ctx.translate(Math.round(o.x * P), Math.round(by * P)); ctx.scale(sx * flip, f === 2 ? -0.35 : sy); ctx.drawImage(this.batImg, -bw / 2, -bh / 2, bw, bh); ctx.restore(); }
+      if (this.batImg && this.batImg.complete && this.batImg.naturalWidth) { // 2-frame flap, crisp nearest-neighbour
+        const im = this.batImg, fw = im.naturalWidth / 2, fh = im.naturalHeight, f = Math.floor(t * 8 + e.id) % 2, bw = 34, bh = bw * fh / fw, flip = Math.sin(e.dir) < 0 ? -1 : 1;
+        ctx.save(); ctx.imageSmoothingEnabled = false; ctx.translate(Math.round(o.x * P), Math.round(by * P)); ctx.scale(flip, 1); ctx.drawImage(im, f * fw, 0, fw, fh, -Math.round(bw / 2), -Math.round(bh / 2), bw, Math.round(bh)); ctx.restore(); }
       else { const f = Math.floor(t * 12 + e.id) % 4; draw(this.S('bigbat' + f, () => A.bigBat(f)), o.x, by, 0.5, 0.5); }
       glow.push([o.x, by, 0.6, 'red']); return; }
     if (e.bat) { for (let i = 0; i < 7; i++) { const a = t * 5 + i * 0.9 + e.id, r = 0.4 + (i % 3) * 0.3; draw(this.S('bat' + ((Math.floor(t * 10) + i) % 2), () => A.bat((Math.floor(t * 10) + i) % 2)), o.x + Math.cos(a) * r, e.rz - 1 + Math.sin(a * 1.3) * r * 0.6, 0.5, 0.5); } glow.push([o.x, e.rz - 1, 1.2, 'red']); return; }

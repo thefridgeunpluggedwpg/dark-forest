@@ -55,3 +55,6 @@ button:active,button.on{background:linear-gradient(180deg,#b8742e,#8a4e1c);color
 
 .portrait{float:right;height:92px;margin:0 0 4px 8px;image-rendering:pixelated;background:radial-gradient(#fff6dc,#e2c891);border:2px solid #5a3a22;border-radius:4px;padding:2px}
 html,body{overscroll-behavior:none;overflow:hidden;position:fixed;inset:0;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+#minimap{position:fixed;right:max(6px,env(safe-area-inset-right));bottom:max(6px,env(safe-area-inset-bottom));width:min(230px,30vw);height:min(230px,30vw);border:3px solid #3a2a14;border-radius:6px;box-shadow:0 3px 10px rgba(0,0,0,.5);image-rendering:pixelated;z-index:5;cursor:crosshair;background:#1d3f5e}
+@media (max-height:500px){#minimap{width:120px;height:120px}}
