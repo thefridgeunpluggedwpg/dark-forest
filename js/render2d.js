@@ -1,5 +1,8 @@
 // Dark Forest v0.2 — Canvas 2D top-down pixel renderer (16 art px per tile, chunk-cached ground, y-sorted sprites, light map)
 import { W, D, WATER, CH, NC, B, RG, REGION_NAMES } from './world.js';
+// v0.10: bat-form sprite hook. null = the code-drawn bigBat() from art.js (shipping default).
+// To swap in an image (e.g. a painted bat), set this to its path, e.g. 'assets/bat.png'.
+export const BAT_SPRITE = null;
 import * as A from './art.js';
 import * as K from './kingsway.js';
 const { P, cv, hash, vnoise } = A;
@@ -211,6 +214,7 @@ export class Renderer {
     const inV = (x, z, m = 3) => x > vx0 - m && x < vx1 + m && z > vz0 - m && z < vz1 + m + 4;
     for (let cz = Math.max(0, cz0 - 1); cz <= Math.min(NC - 1, cz1 + 1); cz++) for (let cx = Math.max(0, cx0 - 1); cx <= Math.min(NC - 1, cx1 + 1); cx++) { const L = this.objs.get(cx + ',' + cz); if (L) for (const o of L) if (inV(o.x, o.z)) list.push(o); }
     for (const d of this.decor) if (inV(d.x, d.z)) list.push(d);
+    if (sim.hideouts) for (const h of sim.hideouts) if (inV(h.x, h.z, 4)) list.push({ t: 'hideout', x: h.x, z: h.z - 0.02, h });
     for (const tr of sim.tribes) { if (!inV(tr.cx, tr.cz, 20)) continue; list.push({ t: 'fire', x: tr.cx - 0.5, z: tr.cz + 2.6, tr });
       list.push({ t: 'well', x: tr.cx + 3, z: tr.cz - 2, tr }); list.push({ t: 'board', x: tr.cx - 3.2, z: tr.cz - 1.2 }); list.push({ t: 'barrel', x: tr.cx + 1.6, z: tr.cz + 1.1 }); list.push({ t: 'barrel', x: tr.cx + 2.3, z: tr.cz + 1.4 });
       for (const h of tr.huts) if (inV(h.x, h.z)) list.push({ t: 'hut', x: h.x + 0.5, z: h.z + 2, h, tr });
@@ -219,7 +223,7 @@ export class Renderer {
     }
     const M = this.M; if (inV(M.cx, M.cz, 30)) list.push({ t: 'mansion', x: M.cx, z: M.z1 + 1 });
     for (const e of sim.ents) { if (!e.alive && !(e.died && sim.tick - e.died < 30)) continue; const x = e.px + (e.x - e.px) * alpha, z = e.pz + (e.z - e.pz) * alpha; e.rx = x; e.rz = z; if (!inV(x, z) || e.inHut) continue; if (e.kind === 'v' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z) < 4) continue; if (e.kind === 'p' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z - 3) < 4 && sim.isNight() === false && sim.tod > 0.64) continue; list.push({ t: e.kind === 'v' ? 'vamp' : e.kind === 'p' ? 'peng' : e.kind === 'm' ? 'tum' : 'thr', x, z: z + 0.3, e }); }
-    if (far) { const keep = new Set(['hut', 'mansion', 'wall', 'gate', 'vamp', 'thr', 'peng', 'tum', 'fire', 'tree', 'dead']); for (let i = list.length - 1; i >= 0; i--) if (!keep.has(list[i].t) || (list[i].t === 'tree' || list[i].t === 'dead') && cam.scale < 3) { list[i] = list[list.length - 1]; list.pop(); } }
+    if (far) { const keep = new Set(['hut', 'hideout', 'mansion', 'wall', 'gate', 'vamp', 'thr', 'peng', 'tum', 'fire', 'tree', 'dead']); for (let i = list.length - 1; i >= 0; i--) if (!keep.has(list[i].t) || (list[i].t === 'tree' || list[i].t === 'dead') && cam.scale < 3) { list[i] = list[list.length - 1]; list.pop(); } }
     list.sort((a, b) => a.z - b.z);
     // ---------- v0.9: the mansion's shadow (vampire sun-immunity zone), shown by day ----------
     { const da = sim.dayAmt ? sim.dayAmt() : 0; if (da > 0.05 && inV(M.cx, M.cz, 30)) { const m = sim.w.mansion, R = (sim.SHADE_R || 12) * P, cx = m.x * P, cz = m.z * P;
@@ -234,6 +238,7 @@ export class Renderer {
     for (const o of list) {
       switch (o.t) {
         case 'tree': { const c = this.S('tree' + o.v + o.nut, () => A.tree(o.v, o.nut ? 'nut' : 'oak')); const sway = Math.round(Math.sin(t * 1.3 + o.x * 0.7 + o.z) * 0.6); draw(c, o.x + sway / P, o.z, 0.5, 0.95); break; }
+        case 'hideout': draw(this.S('hide' + o.h.kind + o.h.v, () => A.hideout(o.h.kind, o.h.v)), o.x, o.z, 0.5, 0.9); break;
         case 'dead': draw(this.S('dead' + o.v, () => A.deadTree(o.v)), o.x, o.z, 0.5, 0.97); break;
         case 'stump': draw(this.S('stump', A.stump), o.x, o.z); break;
         case 'logs': draw(this.S('logs', A.logpile), o.x, o.z); break;
@@ -436,6 +441,18 @@ export class Renderer {
   drawVamp(ctx, o, draw, t, sel, glow, lights, night) {
     // Stefan's original sprite for every vampire (exact), with hover bob, flip and slice-warped cape sway
     const e = o.e, moving = Math.hypot(e.x - e.px, e.z - e.pz) > 0.01;
+    // v0.10: puff of smoke on transforming into / out of bat form
+    for (const at of ['batAt', 'unbatAt']) if (e[at] && e['_p' + at] !== e[at] && this.sim.tick - e[at] < 6) { e['_p' + at] = e[at]; for (let i = 0; i < 14; i++) { const a = Math.random() * 6.28, sp = 0.6 + Math.random() * 1.4; this.parts.push({ k: 'puff', x: o.x + Math.cos(a) * 0.3, z: e.rz - 1.2 + Math.sin(a) * 0.3, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp * 0.6 - 0.4, life: 1.4 + Math.random() * 1.0, ph: Math.random() * 6 }); } }
+    if (e.hideout) { // asleep inside a hideout: two red eyes glinting in the dark mouth + z bubble
+      if (Math.floor(t * 0.7 + e.id) % 5) { ctx.fillStyle = '#ff3030'; const X = Math.round(o.x * P) + (e.id % 3) * 2 - 2, Y = Math.round((e.rz - 0.35) * P); ctx.fillRect(X - 2, Y, 1, 1); ctx.fillRect(X + 1, Y, 1, 1); glow.push([o.x, e.rz - 0.35, 0.5, 'red']); }
+      if (this.view.s >= 10 * this.view.dpr) draw(this.S('bubz', () => A.bubble('z')), o.x + 0.6, e.rz - 1.2 + Math.sin(t * 2) * 0.05, 0.5, 1); return; }
+    if (e.batHome) { const by = e.rz - 1.6 + Math.sin(t * 6 + e.id) * 0.12;
+      if (BAT_SPRITE && !this.batImg) { this.batImg = new Image(); this.batImg.src = BAT_SPRITE; }
+      if (this.batImg && this.batImg.complete && this.batImg.naturalWidth) { // swappable bat asset: flap = 4-frame wing squash, nearest-neighbour
+        const f = Math.floor(t * 12 + e.id) % 4, sy = [1, 0.55, 0.2, 0.55][f], sx = [1, 0.92, 0.85, 0.92][f], bw = 24, bh = bw * this.batImg.naturalHeight / this.batImg.naturalWidth, flip = Math.sin(e.dir) < 0 ? -1 : 1;
+        ctx.save(); ctx.imageSmoothingEnabled = false; ctx.translate(Math.round(o.x * P), Math.round(by * P)); ctx.scale(sx * flip, f === 2 ? -0.35 : sy); ctx.drawImage(this.batImg, -bw / 2, -bh / 2, bw, bh); ctx.restore(); }
+      else { const f = Math.floor(t * 12 + e.id) % 4; draw(this.S('bigbat' + f, () => A.bigBat(f)), o.x, by, 0.5, 0.5); }
+      glow.push([o.x, by, 0.6, 'red']); return; }
     if (e.bat) { for (let i = 0; i < 7; i++) { const a = t * 5 + i * 0.9 + e.id, r = 0.4 + (i % 3) * 0.3; draw(this.S('bat' + ((Math.floor(t * 10) + i) % 2), () => A.bat((Math.floor(t * 10) + i) % 2)), o.x + Math.cos(a) * r, e.rz - 1 + Math.sin(a * 1.3) * r * 0.6, 0.5, 0.5); } glow.push([o.x, e.rz - 1, 1.2, 'red']); return; }
     const VH = 22, k = this.view.s / P, im = this.pick('stefan', VH * k); if (!im) return;
     const iw = im.width, ih = im.height, VW = VH * iw / ih, flip = Math.sin(e.dir) < 0 ? -1 : 1;
@@ -457,6 +474,7 @@ export class Renderer {
       if (p.k === 'leaf') { p.ph += dt * 3; p.x += (p.vx + Math.sin(p.ph) * 0.8) * dt; p.z += p.vz * dt; ctx.fillStyle = p.c; ctx.fillRect(Math.round(p.x * P), Math.round(p.z * P), Math.sin(p.ph) > 0 ? 2 : 1, 1); }
       else if (p.k === 'fly') { p.ph += dt; p.x += Math.sin(p.ph * 1.7) * dt * 0.6; p.z += Math.cos(p.ph * 1.3) * dt * 0.5; const on = Math.sin(p.ph * 4) > -0.3; if (on) { ctx.fillStyle = '#e8ff8a'; ctx.fillRect(Math.round(p.x * P), Math.round(p.z * P), 1, 1); glow.push([p.x, p.z, 0.35, 'green']); } }
       else if (p.k === 'ember') { p.x += p.vx * dt; p.z += p.vz * dt; ctx.fillStyle = p.life > 0.6 ? '#ffd34a' : '#ff6a1a'; ctx.fillRect(Math.round(p.x * P), Math.round(p.z * P), 1, 1); }
+      else if (p.k === 'puff') { p.x += p.vx * dt; p.z += p.vz * dt; p.vx *= 0.96; p.vz *= 0.96; const r = Math.round(2 + (2.4 - p.life) * 2.2); ctx.globalAlpha = Math.max(0, Math.min(1, p.life / 1.2)) * 0.85; ctx.fillStyle = (p.ph > 3) ? '#d8d0e8' : '#a898c0'; ctx.fillRect(Math.round(p.x * P) - r, Math.round(p.z * P) - r + 1, r * 2, r * 2 - 2); ctx.fillRect(Math.round(p.x * P) - r + 1, Math.round(p.z * P) - r, r * 2 - 2, r * 2); ctx.globalAlpha = 1; }
       else if (p.k === 'smoke') { p.ph += dt; p.x += (p.vx + Math.sin(p.ph * 2) * 0.12) * dt; p.z += p.vz * dt; const r = Math.round(1 + (3.2 - p.life) * 1.4); ctx.fillStyle = `rgba(${night > 0.5 ? '120,120,140' : '235,230,220'},${(p.life / 3.2 * 0.55).toFixed(2)})`; ctx.fillRect(Math.round(p.x * P - r), Math.round(p.z * P - r), r * 2, r * 2); }
       else if (p.k === 'dust') { p.ph += dt; p.x += p.vx * dt; p.z += (p.vz + Math.sin(p.ph) * 0.1) * dt; ctx.fillStyle = 'rgba(255,250,220,.5)'; ctx.fillRect(Math.round(p.x * P), Math.round(p.z * P), 1, 1); }
       else if (p.k === 'bat') { p.x += p.vx * dt; p.z += p.vz * dt; p.vx += Math.sin(p.life * 7) * dt * 4; ctx.drawImage(this.S('bat' + (Math.floor(p.life * 10) % 2), () => A.bat(Math.floor(p.life * 10) % 2)), Math.round(p.x * P), Math.round(p.z * P)); }

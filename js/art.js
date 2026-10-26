@@ -224,3 +224,40 @@ export function item(type) { const c = cv(10, 10), g = c.getContext('2d');
     crop: () => { R(g, 4, 1, 2, 8, '#d8b03a'); R(g, 2, 2, 2, 4, '#f0c84a'); R(g, 6, 2, 2, 4, '#f0c84a'); }, wood: () => { R(g, 1, 3, 8, 4, '#8a5a32'); R(g, 1, 3, 8, 1, '#b07a44'); R(g, 7, 3, 2, 4, '#d6a46a'); },
     stone: () => { R(g, 2, 3, 6, 5, '#8d93a3'); R(g, 2, 3, 3, 2, '#b2b8c6'); R(g, 6, 6, 2, 2, '#6f7586'); }, reed: () => { R(g, 3, 1, 1, 8, '#6aa83a'); R(g, 5, 2, 1, 7, '#7cc44a'); R(g, 3, 1, 1, 2, '#6b3a1e'); R(g, 5, 2, 1, 2, '#6b3a1e'); } };
   (D[type] || D.wood)(); return outline(c, '#24160f'); }
+// v0.10 vampire daytime hideouts (not buildings: caves, hollow logs, crypt hollows). 40x30 px.
+export function hideout(kind, v) {
+  const c = cv(40, 30), g = c.getContext('2d'), rr = a => hash(v, a, 91);
+  if (kind === 'cave') {
+    const RK = ['#2b2d38', '#3e4150', '#555a6a', '#6f7586', '#8d93a3'];
+    for (let y = 6; y < 29; y++) { const hw = Math.round(17 * Math.sqrt(1 - Math.pow((29 - y) / 23, 2))); for (let x = 20 - hw; x < 20 + hw; x++) { const e = Math.min(x - (20 - hw), 20 + hw - 1 - x, y - 6); const n = rr(x * 31 + y) ; R(g, x, y, 1, 1, RK[Math.max(0, Math.min(4, (e < 1 ? 1 : y < 14 ? 3 : 2) + (n > 0.82 ? 1 : n < 0.15 ? -1 : 0)))]); } }
+    for (let y = 15; y < 29; y++) { const hw = Math.round(7 * Math.sqrt(Math.max(0, 1 - Math.pow((29 - y) / 14, 2)))); R(g, 20 - hw, y, hw * 2, 1, y < 17 ? '#1a1a22' : '#07060b'); }
+    R(g, 13, 27, 14, 2, '#07060b'); R(g, 6, 9, 3, 1, '#b2b8c6'); R(g, 24, 8, 4, 1, '#b2b8c6'); R(g, 31, 13, 2, 1, '#8d93a3');
+    for (let i = 0; i < 5; i++) R(g, 3 + i * 8 + (rr(i) * 4 | 0), 27, 2, 2, '#3f6b2a');
+  } else if (kind === 'log') {
+    const BK = ['#2a160e', '#4a2a18', '#6a3d22', '#8a5530', '#a8703f'];
+    for (let y = 12; y < 27; y++) for (let x = 3; x < 36; x++) { const ry = (y - 19.5) / 7.5; if (Math.abs(ry) > 1) continue; const sh = ry < -0.5 ? 4 : ry < 0.1 ? 3 : ry < 0.6 ? 2 : 1; R(g, x, y, 1, 1, BK[(rr(x * 7 + y * 3) > 0.9 ? sh - 1 : sh)]); }
+    for (let x = 5; x < 34; x += 4) R(g, x, 14 + (x % 3), 2, 1, '#2a160e');
+    for (let y = 12; y < 27; y++) { const ry = (y - 19.5) / 7.5, hw = Math.round(5 * Math.sqrt(Math.max(0, 1 - ry * ry))); R(g, 4 - (hw >> 1), y, hw, 1, '#c08850'); }
+    for (let y = 14; y < 25; y++) { const ry = (y - 19.5) / 5.5, hw = Math.round(3 * Math.sqrt(Math.max(0, 1 - ry * ry))); R(g, 4 - (hw >> 1), y, hw, 1, '#07060b'); }
+    R(g, 8, 26, 26, 2, 'rgba(10,14,6,0.5)'); R(g, 20, 9, 2, 3, '#3f6b2a'); R(g, 19, 8, 4, 1, '#5aa83a'); R(g, 28, 10, 1, 2, '#5aa83a');
+  } else { // crypt hollow: a sunken stone slab half-buried in the earth, dark gap beneath
+    const ST = ['#26242e', '#3a3844', '#4d4a58', '#64606f', '#8a8696'];
+    R(g, 4, 24, 32, 4, '#2a1f17'); R(g, 5, 23, 30, 1, '#3a2b20');
+    for (let y = 10; y < 24; y++) for (let x = 6; x < 34; x++) { const e = Math.min(x - 6, 33 - x, y - 10); const n = rr(x * 13 + y * 5); R(g, x, y, 1, 1, ST[Math.max(0, Math.min(4, (e < 1 ? 4 : y < 13 ? 3 : 2) - (n > 0.88 ? 1 : 0)))]); }
+    R(g, 12, 17, 16, 7, '#07060b'); R(g, 12, 16, 16, 1, '#26242e'); R(g, 19, 11, 2, 5, '#8a8696'); R(g, 17, 12, 6, 2, '#8a8696');
+    R(g, 7, 21, 2, 1, '#3f6b2a'); R(g, 30, 13, 3, 1, '#3f6b2a'); R(g, 31, 22, 2, 2, '#5aa83a');
+  }
+  return c;
+}
+// v0.10 bat form: a big vampire bat (26x16), 4 flap frames
+export function bigBat(f) {
+  const c = cv(39, 24), g = c.getContext('2d'), D0 = '#120c18', D1 = '#2c1c38', D2 = '#4a3058', M = '#7a4a82'; g.scale(1.5, 1.5);
+  const lift = [-4, -1, 2, -1][f % 4];
+  // wings: drawn as stepped membranes from body to tips
+  for (const s of [-1, 1]) for (let i = 0; i < 10; i++) { const x = 13 + s * (2 + i), y0 = 6 + Math.round(lift * i / 9) - (i > 6 ? 1 : 0), h = Math.max(1, 5 - Math.floor(i / 2.5)); R(g, x, y0, 1, h, i % 3 === 2 ? D0 : D1); if (h > 2) R(g, x, y0 + 1, 1, 1, D2); if (i === 9) R(g, x, y0 - 1, 1, 1, D0); }
+  for (const s of [-1, 1]) { R(g, 13 + s * 5, 6 + Math.round(lift * 4 / 9), 1, 3, M); R(g, 13 + s * 8, 6 + Math.round(lift * 7 / 9), 1, 2, M); }
+  R(g, 11, 5, 4, 6, D0); R(g, 12, 6, 2, 4, D2); R(g, 11, 3, 1, 2, D0); R(g, 14, 3, 1, 2, D0); R(g, 11, 4, 4, 2, D0);
+  R(g, 11, 5, 1, 1, '#ff3030'); R(g, 14, 5, 1, 1, '#ff3030'); R(g, 12, 7, 1, 1, '#e8e0f0'); R(g, 13, 7, 1, 1, '#e8e0f0');
+  R(g, 12, 11, 1, 1, D0); R(g, 13, 11, 1, 1, D0);
+  return c;
+}
