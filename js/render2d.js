@@ -417,7 +417,7 @@ export class Renderer {
     const x = o.x * P, y = (e.rz + 0.35) * P + 1.5, rot = moving ? Math.sin(ph) * 0.13 : Math.sin(t * 1.6 + e.id) * 0.03, hop = moving ? Math.abs(Math.cos(ph)) * 0.7 : 0;
     const st0 = e.state; ctx.save(); ctx.translate(x, y - hop); if (st0 === 'sliding') { ctx.translate(0, -PW * 0.45); ctx.rotate(flip * 1.45); ctx.translate(0, PH * 0.5); } else if (st0 === 'napping') { ctx.translate(0, -2); ctx.rotate(-1.3); ctx.translate(PH * 0.42, 0); } else ctx.rotate(rot); ctx.scale(flip, 1); ctx.drawImage(im, -PW / 2, -PH, PW, PH); ctx.restore();
     if (this.view.s < 10 * this.view.dpr) return;
-    const st = e.state; let ic = null; if (e.alert && this.sim && this.sim.tick - e.alert < 40) ic = '!'; else if (st === 'napping') ic = Math.floor(t * 1.2 + e.id) % 3 ? 'z' : null; else if (st === 'fishing') ic = 'fish'; else if (st === 'sliding') ic = null; else if (st === 'pitching') ic = Math.floor(t * 1.5) % 2 ? 'book' : 'talk'; else if (st === 'signalling') ic = '!'; else if (st === 'scouting' && Math.floor(t * 0.6 + e.id) % 4 === 0) ic = '?';
+    const st = e.state; let ic = null; if (e.fired) ic = Math.floor(t * 1.5) % 2 ? 'anger' : '!'; else if (e.alert && this.sim && this.sim.tick - e.alert < 40) ic = '!'; else if (st === 'napping') ic = Math.floor(t * 1.2 + e.id) % 3 ? 'z' : null; else if (st === 'fishing') ic = 'fish'; else if (st === 'sliding') ic = null; else if (st === 'pitching') ic = Math.floor(t * 1.5) % 2 ? 'book' : 'talk'; else if (st === 'signalling') ic = '!'; else if (st === 'scouting' && Math.floor(t * 0.6 + e.id) % 4 === 0) ic = '?';
     if (ic) draw(this.S('bub' + ic, () => A.bubble(ic)), (x + 6) / P, (y - hop - PH - 1) / P + Math.sin(t * 3 + e.id) * 0.04, 0.5, 1);
   }
   drawTum(ctx, o, draw, t, night, sim) {
@@ -426,7 +426,7 @@ export class Renderer {
     const VW = VH * im.width / im.height, flip = Math.sin(e.dir) < 0 ? 1 : -1 /* Tumnus art faces left natively */, ph = (e.walk || 0) * 4.5 + e.id, x = o.x * P, y = (e.rz + 0.3) * P + 1.5;
     const bob = moving ? Math.abs(Math.sin(ph)) * 0.9 : 0, rot = moving ? Math.sin(ph) * 0.04 : 0;
     ctx.save(); ctx.translate(x, y - bob); ctx.rotate(rot); ctx.scale(flip, 1 + (moving ? 0.015 * Math.cos(ph * 2) : 0.01 * Math.sin(t * 2))); ctx.drawImage(im, -VW / 2, -VH, VW, VH); ctx.restore();
-    if (this.view.s < 10 * this.view.dpr) return; const st = e.state || ''; const ic = st === 'pitching' ? (Math.floor(t * 1.5) % 2 ? 'book' : 'talk') : (e.snitchAt && sim.tick - e.snitchAt < 40) ? '!' : null;
+    if (this.view.s < 10 * this.view.dpr) return; const st = e.state || ''; const ic = st === 'pitching' ? (Math.floor(t * 1.5) % 2 ? 'book' : 'talk') : (e.fireAt && sim.tick - e.fireAt < 150) ? 'anger' : (e.snitchAt && sim.tick - e.snitchAt < 40) ? '!' : null;
     if (ic) draw(this.S('bub' + ic, () => A.bubble(ic)), (x + 7) / P, (y - bob - VH - 1) / P + Math.sin(t * 3) * 0.04, 0.5, 1);
   }
   drawVamp(ctx, o, draw, t, sel, glow, lights, night) {

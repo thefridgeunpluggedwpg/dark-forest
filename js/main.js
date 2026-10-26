@@ -41,6 +41,7 @@ function tap(x, y) {
   const h = toWorld(x, y); if (!world.inb(h.x | 0, h.z | 0)) return;
   if (mode === 'spawn') { const e = sim.godSpawn(h.x, h.z); select(e, false); }
   else if (mode === 'spawnP') { const e = sim.godPenguin(h.x, h.z); if (e) select(e, false); }
+  else if (mode === 'spawnV') { const e = sim.godVampire(h.x, h.z); if (e) select(e, false); }
   else if (mode.startsWith('drop:')) sim.godDrop(mode.slice(5), h.x, h.z);
 }
 // ---------- UI ----------
@@ -52,7 +53,7 @@ document.querySelectorAll('.panel').forEach(p => { p.querySelector('.tab').oncli
 $('#hideAll').onclick = () => { $('#ui').classList.toggle('hideall'); $('#hideAll').classList.toggle('on'); };
 let speed = 1; function setSpeed(s) { speed = s; document.querySelectorAll('[data-speed]').forEach(b => b.classList.toggle('on', +b.dataset.speed === s)); }
 document.querySelectorAll('[data-speed]').forEach(b => b.onclick = () => setSpeed(+b.dataset.speed));
-const HINTS = { select: 'Tap a creature to follow it. Drag to pan; wheel or pinch to zoom; two fingers to pan.', spawn: 'Tap the ground to place a new Thronglet.', spawnP: 'Tap the ground to place a penguin (max 10 — one per mansion bedroom).' };
+const HINTS = { select: 'Tap a creature to follow it. Drag to pan; wheel or pinch to zoom; two fingers to pan.', spawn: 'Tap the ground to place a new Thronglet.', spawnP: 'Tap the ground to place a penguin (max 10 — one per mansion bedroom).', spawnV: 'Tap the ground to summon a vampire. It lives at 83 Kingsway (vampire rooms are separate from the 10 penguin bedrooms). By day it returns home.' };
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; document.querySelectorAll('[data-mode]').forEach(o => o.classList.toggle('on', o === b)); $('#modeHint').textContent = HINTS[mode] || `Tap the ground to drop ${mode.slice(5)}.`; });
 $('#btnTumnus').onclick = () => { if (sim.tumnus && sim.tumnus.alive) select(sim.tumnus, true); };
 $('#btnUnfollow').onclick = () => { cam.follow = null; updateFollowUI(); };

@@ -4,17 +4,33 @@ const dist = (a, b, c, d) => Math.hypot(a - c, b - d);
 export const BEDROOMS = 10;
 const PNAMES = ['Pip', 'Waddles', 'Tux', 'Flipper', 'Nugget', 'Pebble', 'Sleet', 'Biscuit', 'Gus', 'Puddle'];
 export const PenguinMixin = {
-  penguins() { return this.ents.filter(e => e.kind === 'p' && e.alive); },
+  penguins() { return this.ents.filter(e => e.kind === 'p' && e.alive && !e.fired); },
+  FIRE_EVERY: 4, FIRE_FLOOR: 3,
   spawnPenguin(x, z, name, from) {
     const e = { id: this.nid++, kind: 'p', name: name || PNAMES[(this.pIdx = (this.pIdx || 0) + 1) - 1] || 'Penguin ' + this.nid, x, z, px: x, pz: z, y: this.w.top(x | 0, z | 0), dir: 0, hp: 60, maxhp: 60,
-      act: null, path: null, stuck: 0, pathCool: 0, alive: true, walk: 0, cool: 0, conv: 0, spots: 0, convDay: 0, state: 'resting', from: from || null, scare: 0 };
+      act: null, path: null, stuck: 0, pathCool: 0, alive: true, walk: 0, cool: 0, conv: 0, spots: 0, convDay: 0, caughtCount: 0, hired: this.tick, state: 'resting', from: from || null, scare: 0 };
     this.ents.push(e); this.byId.set(e.id, e); return e;
   },
-  initPenguins() { const m = this.w.mansion; for (let i = 0; i < 3; i++) this.spawnPenguin(m.x + this.rnd(-3, 3), m.z + 3 + this.rnd(-1, 1)); this.spawnTumnus(); this.pstats = { slack: 0, caught: 0, snitchSpots: 0, tConv: 0, assignments: 0, conversions: 0, spots: 0, spotKills: 0, shooed: 0, pitches: 0, refusals: 0, perDay: {} }; this.bedsFullLogged = false; },
+  initPenguins() { const m = this.w.mansion; for (let i = 0; i < 3; i++) this.spawnPenguin(m.x + this.rnd(-3, 3), m.z + 3 + this.rnd(-1, 1)); this.spawnTumnus(); this.pstats = { slack: 0, caught: 0, snitchSpots: 0, tConv: 0, assignments: 0, conversions: 0, spots: 0, spotKills: 0, shooed: 0, pitches: 0, refusals: 0, perDay: {}, fired: 0, fireLog: [] }; this.bedsFullLogged = false; },
   spawnTumnus() { const m = this.w.mansion; const e = { id: this.nid++, kind: 'm', name: 'Ian Tumnus', x: m.x + 2, z: m.z + 4, px: m.x + 2, pz: m.z + 4, y: 0, dir: 0, hp: 999, maxhp: 999, act: null, path: null, stuck: 0, pathCool: 0, alive: true, walk: 0, cool: 0, conv: 0, state: 'resting', orders: 'none yet', visit: 0 };
     this.ents.push(e); this.byId.set(e.id, e); this.tumnus = e; return e; },
   tribeNeed(tr) { let s = 0; for (const e of this.members(tr)) { if (e.hunger > 55) s += 2; if (this.rep(e) < -15) s += 2; if (e.fear > 50) s += 1; } for (const e of this.ents) if (e.kind === 't' && e.alive && (e.exile || e.tribe == null) && dist(e.x, e.z, tr.cx, tr.cz) < 40) s += 4; return s + (tr.stock.food < 3 ? 3 : 0); },
-  giveOrders(night) { const T = this.tumnus; if (!T || !T.alive) return; const ps = this.penguins(); if (!ps.length) return;
+  firePenguin(T) { // every FIRE_EVERY days at the morning assignment, the worst performer is let go
+    const ps = this.penguins(); if (T.firedDay === this.day) return; T.firedDay = this.day;
+    if (ps.length <= this.FIRE_FLOOR) { this.pstats.fireLog.push({ day: this.day, skipped: true, n: ps.length }); this.log(`Ian Tumnus reviewed the penguins but kept everyone on — only ${ps.length} left, and he can't spare any.`, 'vamp'); return; }
+    const worst = ps.slice().sort((a, b) => (b.caughtCount - a.caughtCount) || (a.hired - b.hired))[0];
+    const why = worst.caughtCount ? `caught slacking ${worst.caughtCount} time${worst.caughtCount > 1 ? 's' : ''}` : 'longest on the payroll and least useful';
+    worst.fired = { t: 0, why }; worst.order = null; worst.slack = null; worst.summon = null; worst.alert = this.tick; T.snitchAt = this.tick; T.fireAt = this.tick; T.lastFired = worst.name;
+    this.pstats.fired++; this.pstats.fireLog.push({ day: this.day, name: worst.name, why, before: ps.length, after: ps.length - 1 });
+    this.log(`Ian Tumnus fired ${worst.name} (${why}). "Clear out your bedroom." ${worst.name} waddled out of 83 Kingsway — ${ps.length - 1}/${BEDROOMS} bedrooms filled, recruiting resumes.`, 'vamp'); },
+  firedWalk(p) { const m = this.w.mansion, F = p.fired; p.state = 'fired — leaving 83 Kingsway'; F.t++;
+    if (!F.to) F.to = { x: m.x + this.rnd(-3, 3), z: m.z + 16 };
+    if (!(this.moveTo(p, F.to.x, F.to.z, 0.2, 1.5) || F.t > 600)) return;
+    p.alive = false; p.gone = true; p.died = this.tick;
+    const e = this.spawnThronglet(p.x, p.z); this.usedNames.delete(e.name); e.name = p.name; e.wasPenguin = true;
+    e.exile = true; e.exReason = 'fired'; e.exRep = 0; e.asked = new Set(); e.refusedAll = false; e.exiledDay = this.day; e.exTribe = null; e.tribe = null; e.home = null; e.noRehire = this.day + this.FIRE_EVERY;
+    this.log(`${e.name} pulled off the penguin suit and is an ordinary Thronglet again — an outcast who must find a tribe to take them in, or hide.`, 'exile'); },
+  giveOrders(night) { const T = this.tumnus; if (!T || !T.alive) return; if (!night && this.day % this.FIRE_EVERY === 0) this.firePenguin(T); const ps = this.penguins(); if (!ps.length) return;
     const full = ps.length >= BEDROOMS, trs = this.tribes.filter(t => t.alive && t.members.size).map(t => [t, this.tribeNeed(t)]).sort((a, b) => b[1] - a[1]).map(x => x[0]);
     const parts = []; ps.forEach((p, i) => { const tr = trs[i % Math.max(1, Math.min(trs.length, night ? trs.length : 2 + (i >> 2)))]; if (!tr) return; const where = night ? this.w.regionAt(tr.cx + this.rnd(-20, 20), tr.cz + this.rnd(-20, 20)).replace(/^the /, '') : tr.name;
       const dbl = night && p.order && p.order.double; p.order = { tr, night, double: dbl, scoutOnly: !night && full, label: dbl ? 'double scouting (punishment)' : night ? 'scout ' + where : (full ? 'scout ' : 'recruit in ') + tr.name }; parts.push(`${p.name} to ${night ? 'the ' + where : tr.name}`); });
@@ -27,7 +43,7 @@ export const PenguinMixin = {
     const day = !this.isNight() && t > 0.27 && t < 0.64, pdk = this.day;
     // personally pitch to exiles / refused outcasts with his parcel
     if (day && !T.pitch && T.convDay !== pdk && this.penguins().length < BEDROOMS && (this.pstats.perDay[pdk] || 0) < 2 && this.penguins().length < this.convCap()) {
-      let best = null, bd = 90; for (const e of this.ents) if (e.kind === 't' && e.alive && !e.inHut && !e.bcu && !e.hidden && (e.exile || e.tribe == null) && e.tPitchDay !== pdk) { const d = dist(e.x, e.z, T.x, T.z); if (d < bd) { bd = d; best = e; } }
+      let best = null, bd = 90; for (const e of this.ents) if (e.kind === 't' && e.alive && !e.inHut && !e.bcu && !e.hidden && (e.exile || e.tribe == null) && e.tPitchDay !== pdk && !(e.noRehire > pdk)) { const d = dist(e.x, e.z, T.x, T.z); if (d < bd) { bd = d; best = e; } }
       if (best) { best.tPitchDay = pdk; T.pitch = { e: best, t: 0, walk: 0 }; } }
     if (T.pitch) { const P = T.pitch, e = P.e; if (!e.alive || e.inHut || e.bcu || !day) { T.pitch = null; return; }
       if (dist(T.x, T.z, e.x, e.z) > 1.5) { T.state = 'walking to ' + e.name; if (++P.walk > 1200) T.pitch = null; else this.moveTo(T, e.x, e.z, 0.24, 1.2); return; }
@@ -47,7 +63,7 @@ export const PenguinMixin = {
     const WP = [[0, 9], [8, 7], [11, 0], [8, -8], [0, -11], [-8, -8], [-11, 0], [-8, 7]]; T.state = 'parading the grounds';
     const wp = WP[(T.wp || 0) % WP.length]; if (this.moveTo(T, m.x + wp[0], m.z + wp[1], 0.17, 1.4) || ++T.wpt > 400) { T.wpt = 0; T.wp = (T.wp || 0) + 1; if (T.wp % WP.length === 0) { T.laps = (T.laps || 0) + 1;
       if (T.laps % 2 === 0) { const ps = this.penguins().filter(p => dist(p.x, p.z, m.x, m.z) > 12 && dist(p.x, p.z, m.x, m.z) < 90); if (ps.length) { T.insp = { p: ps[T.laps / 2 % ps.length | 0], t: 0 }; } } } } },
-  catchSlacker(T, p) { const what = p.slack.kind; p.slack = null; T.snitchAt = this.tick; T.caught = (T.caught || 0) + 1; this.pstats.caught++; p.alert = this.tick;
+  catchSlacker(T, p) { const what = p.slack.kind; p.slack = null; T.snitchAt = this.tick; T.caught = (T.caught || 0) + 1; this.pstats.caught++; p.alert = this.tick; p.caughtCount = (p.caughtCount || 0) + 1;
     const v = this.vamps().find(v => v.name === 'Stefan') || this.vamps()[0]; if (v) v.alert = this.tick; const who = v ? v.name : 'the vampires';
     const pun = this.r() < 0.5 ? 'summon' : 'double';
     if (pun === 'summon') { p.summon = { w: 0 }; } else { p.order = { ...(p.order || {}), night: true, double: true, tr: (p.order && p.order.tr) || this.tribes.find(t => t.alive), label: 'double scouting (punishment)' }; p.noSlack = this.tick + 3 * 1200; }
@@ -60,6 +76,7 @@ export const PenguinMixin = {
     if (e.hunger < 40 && rep > 15) c *= 0.25; return Math.min(0.55, c * (1.2 - e.traits.loyalty * 0.5)); },
   updateP(p) {
     const m = this.w.mansion, t = this.tod, night = this.isNight(), day = !night && t > 0.27 && t < 0.64;
+    if (p.fired) return this.firedWalk(p);
     if (p.cool > 0) p.cool--; if (night && p.order && p.order.double) p.cool = Math.max(0, p.cool - 1);
     if (p.scare > 0) { p.scare--; p.state = 'returning'; this.moveTo(p, m.x, m.z + 3, 0.28, 2); return; }
     if (p.summon) { p.state = p.summon.at ? 'scolded' : 'summoned'; p.pitch = null; if (!p.summon.at) { if (this.moveTo(p, m.x, m.z + 3, 0.3, 1.5) || dist(p.x, p.z, m.x, m.z + 3) < 2.5 || ++p.summon.w > 900) p.summon.at = this.tick; } else if (this.tick - p.summon.at > 90) { p.grounded = this.day + (t > 0.5 ? 1 : 0); p.noSlack = this.tick + 3 * 1200; p.summon = null; } return; }
@@ -91,7 +108,7 @@ export const PenguinMixin = {
     if (full || p.convDay === pdk || today >= 2 || this.penguins().length >= this.convCap()) { p.pitch = null; p.state = 'resting'; this.moveTo(p, m.x + ((p.id % 5) - 2), m.z + 3, 0.2, 1.5); return; }
     let P = p.pitch;
     if (P && (!P.e.alive || P.e.inHut || P.e.bcu)) P = p.pitch = null;
-    if (!P) { let best = null, bs = -1e9; for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.bcu || e.pitchedDay === pdk || e.hidden) continue; const s = this.pitchChance(e) * 200 - dist(e.x, e.z, p.x, p.z) / 3 + (p.order && !p.order.night && e.tribe === p.order.tr.id ? 40 : 0); if (s > bs) { bs = s; best = e; } }
+    if (!P) { let best = null, bs = -1e9; for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.bcu || e.pitchedDay === pdk || e.hidden || e.noRehire > pdk) continue; const s = this.pitchChance(e) * 200 - dist(e.x, e.z, p.x, p.z) / 3 + (p.order && !p.order.night && e.tribe === p.order.tr.id ? 40 : 0); if (s > bs) { bs = s; best = e; } }
       if (!best) { p.state = 'recruiting'; return; } P = p.pitch = { e: best, t: 0 }; best.pitchedDay = pdk; }
     const e = P.e; p.state = 'recruiting';
     if (dist(p.x, p.z, e.x, e.z) > 1.4) { if (++P.walk > 900) p.pitch = null; else this.moveTo(p, e.x, e.z, 0.22, 1.1); P.walk = (P.walk || 0); return; }
