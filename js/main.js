@@ -114,9 +114,15 @@ const MM = (() => { const c = document.createElement('canvas'); c.id = 'minimap'
     g.fillStyle = '#b02030'; g.fillRect(m.x - 6, m.z - 6, 12, 12); g.strokeStyle = '#ffd0d0'; g.lineWidth = 2; g.strokeRect(m.x - 6, m.z - 6, 12, 12);
     for (const v of sim.ents) if (v.kind === 'v' && v.alive && !v.inMansion && !v.hideout) { g.fillStyle = v.batHome ? '#c080ff' : '#ff4040'; g.fillRect(v.x - 3, v.z - 3, 6, 6); }
     for (const e of sim.ents) if (e.kind === 't' && e.alive && e.trade) { g.fillStyle = '#ffe070'; g.beginPath(); g.arc(e.x, e.z, 4, 0, 6.3); g.fill(); }
-    g.font = 'bold 22px "Pixelify Sans", monospace, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'bottom';
-    for (const tr of sim.tribes) { if (!tr.alive) continue; g.fillStyle = tr.color || '#e8c070'; g.beginPath(); g.arc(tr.cx, tr.cz, 8, 0, 6.3); g.fill(); g.lineWidth = 3; g.strokeStyle = '#1a1208'; g.stroke();
-      const y = tr.cz - 12 < 30 ? tr.cz + 36 : tr.cz - 12, x = Math.max(70, Math.min(442, tr.cx)); g.lineWidth = 6; g.strokeStyle = 'rgba(15,10,5,0.9)'; g.strokeText(tr.name, x, y); g.fillStyle = '#fff4d0'; g.fillText(tr.name, x, y); }
+    // v0.11.1 labels: bigger font on a dark pill, nudged apart so they never overlap, kept inside the map
+    const fs = Math.round(512 / c.getBoundingClientRect().width * 12.5) || 28; g.font = `bold ${fs}px "Pixelify Sans", monospace, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const labs = sim.tribes.filter(tr => tr.alive && !tr.outcasts).map(tr => { const w = g.measureText(tr.name).width + fs * 0.7, h = fs * 1.3; return { tr, w, h, x: tr.cx, y: tr.cz - fs * 1.1, ax: tr.cx, ay: tr.cz }; });
+    const clampL = L => { L.x = Math.max(L.w / 2 + 3, Math.min(509 - L.w / 2, L.x)); L.y = Math.max(L.h / 2 + 3, Math.min(509 - L.h / 2, L.y)); };
+    for (let it = 0; it < 60; it++) { let moved = false; for (const L of labs) clampL(L); for (let a = 0; a < labs.length; a++) for (let b = a + 1; b < labs.length; b++) { const A = labs[a], B = labs[b], ox = (A.w + B.w) / 2 + 4 - Math.abs(A.x - B.x), oy = (A.h + B.h) / 2 + 3 - Math.abs(A.y - B.y); if (ox > 0 && oy > 0) { moved = true; if (oy < ox) { const d = (A.y <= B.y ? -1 : 1) * oy / 2; A.y += d; B.y -= d; } else { const d = (A.x <= B.x ? -1 : 1) * ox / 2; A.x += d; B.x -= d; } } } if (!moved) break; }
+    for (const L of labs) { clampL(L); const { tr } = L; g.fillStyle = tr.color || '#e8c070'; g.beginPath(); g.arc(tr.cx, tr.cz, 8, 0, 6.3); g.fill(); g.lineWidth = 3; g.strokeStyle = '#1a1208'; g.stroke();
+      if (Math.hypot(L.x - L.ax, L.y - L.ay) > fs * 1.6) { g.strokeStyle = 'rgba(255,240,200,0.7)'; g.lineWidth = 2; g.beginPath(); g.moveTo(L.ax, L.ay); g.lineTo(L.x, L.y + (L.y < L.ay ? L.h / 2 : -L.h / 2)); g.stroke(); }
+      const x0 = L.x - L.w / 2, y0 = L.y - L.h / 2, r = L.h / 2; g.fillStyle = 'rgba(18,12,6,0.82)'; g.beginPath(); g.moveTo(x0 + r, y0); g.arcTo(x0 + L.w, y0, x0 + L.w, y0 + L.h, r); g.arcTo(x0 + L.w, y0 + L.h, x0, y0 + L.h, r); g.arcTo(x0, y0 + L.h, x0, y0, r); g.arcTo(x0, y0, x0 + L.w, y0, r); g.closePath(); g.fill(); g.strokeStyle = 'rgba(232,192,112,0.75)'; g.lineWidth = 2; g.stroke();
+      g.fillStyle = '#fff4d0'; g.fillText(tr.name, L.x, L.y + 1); }
     const hw = innerWidth / cam.scale / 2, hh = innerHeight / cam.scale / 2; g.strokeStyle = '#ffe9a8'; g.lineWidth = 3; g.strokeRect(cam.tx - hw, cam.tz - hh, hw * 2, hh * 2); } }; })();
 window.MM = MM;
 function loop(now) {

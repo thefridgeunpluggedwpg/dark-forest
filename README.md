@@ -122,3 +122,10 @@ At dusk (around 16:00 on the in-game clock), each tribe calls its people home. M
 - **Swarms**: up to 4 vampires converge on one target. A vampire squaring up to a guard calls its pack, and the guard must win every roll.
 - **Clockwise raid rotation**: villages are sorted by bearing around 83 Kingsway. Each night the coven's main pack (all but ~1 in 4 opportunists) flies out in bat form to the next village clockwise and materializes at its edge. Far-flung vampires head home early: to the door if it's in reach, otherwise to the nearest forest hideout. Extra hideouts are added near raid sites if needed.
 - Tests: `test/raid.mjs`, `test/defender.mjs` (with the name check), `test/trade.mjs`, `test/dawn.mjs`, `test/v011shots.mjs`.
+
+## v0.11.1 (local, awaiting approval; cache dark-forest-v9, not pushed)
+- **Mini-map labels**: bigger font on dark rounded pills, labels nudged apart so they never overlap (with a leader line if moved far), kept inside the frame. The mini-map is now 260 px (150 px on short screens).
+- **No village wipeouts ("lying low")**: a village down to 5 or fewer members lies low. The raid rotation passes it by, and its people within 30 tiles of home aren't hunted (the last 2 aren't hunted anywhere). Each dawn the biggest village (12+) sends 2 migrants to help it rebuild. It stops lying low at 8. Births now need two different parents (fixes "child of Nyb & Nyb").
+- **Population floor**: the nightly kill budget is 0 below 28 Thronglets for the first 4 days and below 41 on days 5–10 and below 39 after that, plus up to 3 births per village per dawn while the island is under 46, so the island holds ~40+.
+- **a/an**: every feed line goes through `fixArticles()` ("an Emberfall door", "An Oakhollow guard").
+- Test: `test/villages.mjs` (no wipeouts, min village size, min pop after day 7; seeds 7, 42, 123, 1, 99).

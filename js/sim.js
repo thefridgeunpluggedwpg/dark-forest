@@ -13,7 +13,11 @@ const VAMP_NAMES = ['Stefan', 'Vlad', 'Carmilla', 'Lucian', 'Mircea', 'Elisabeta
 export const VAMP_CAP = 12;
 export const BAT_SPEED = 2.6;
 export const TRADE_SPEED = 0.8;
-export const GUARD_WIN = 0.4, SWARM_CAP = 4, RAID_SPEED = 2.6;
+// v0.11.1 a/an for every feed line: 'a Emberfall door' → 'an Emberfall door', 'A Oakhollow guard' → 'An Oakhollow guard'.
+// Vowel-sound words only; 'u'/'eu'/'one' words that start with a 'y'/'w' sound keep 'a' (a unicorn, a European, a one-eyed…).
+const A_EXC = /^(u[bcdfgklmnprstvz][aeiou]|uni|use|usu|ute|uti|eu|ewe|one|once|ufo)/i;
+export function fixArticles(t) { return t.replace(/\b([Aa]) ([A-Za-z][\w'-]*)/g, (m, a, w) => /^[aeiou]/i.test(w) && !A_EXC.test(w) ? `${a}n ${w}` : m); }
+export const LOW_FLOOR = 5, GUARD_WIN = 0.4, SWARM_CAP = 4, RAID_SPEED = 2.6;
 export const SHADE_R = 12; // v0.9: the mansion's shadow — vampires are sun-immune within this radius of 83 Kingsway's centre
 const HUT_SLOTS = 8, RING_R = 11;
 const dist = (a, b, c, d) => Math.hypot(a - c, b - d);
@@ -44,11 +48,21 @@ export class Sim {
   threat() { return Math.min(1, Math.max(0, (this.day - 1) / 24)); }
   // v0.10 coven appetite: a nightly kill budget that shrinks as the Thronglets thin out, so the forest never empties
   nightKey() { return this.tod > 0.5 ? this.day : this.day - 1; }
-  killBudget() { const n = this.thronglets().length; return n < 28 ? 0 : Math.max(1, Math.min(10, Math.round((n - 30) / 2.5))); }
+  killBudget() { const n = this.thronglets().length; const f = this.day <= 4 ? 28 : this.day <= 10 ? 41 : 39; return n < f ? 0 : Math.max(1, Math.min(10, Math.round((n - f + 2) / 2.5))); /* v0.11.1: floor 28 days 1-4, 41 days 5-10 (slow-growth seeds), then 39 so pop holds ~40+ */ }
   sated() { return (this.nightKills && this.nightKills.k === this.nightKey() ? this.nightKills.n : 0) >= this.killBudget(); }
   isGuard(v) { if (!this.guardIds || this.tick - this.guardAt >= 20) { this.guardAt = this.tick; const vs = this.vamps().filter(o => o.name !== 'Stefan' && !o.batHome && !o.hideout).sort((a, b) => a.id - b.id), n = vs.length + 1, g = n >= 6 ? 3 : n >= 3 ? 2 : n >= 2 ? 1 : 0; this.guardIds = vs.slice(0, g).map(o => o.id); } return this.guardIds.includes(v.id); }
   // ===== v0.11 village guards: 1 (small village) or 2 (8+ members) Thronglets stand guard. The ONLY Thronglets who ever resist.
-  guardPlan() { for (const tr of this.tribes) { if (!tr.alive || tr.outcasts) { if (tr.guards) tr.guards.length = 0; continue; } tr.guards = (tr.guards || []).filter(id => { const g = this.byId.get(id); return g && g.alive && !g.exile && g.tribe === tr.id && !g.bcu; });
+  // ===== v0.11.1 'lying low': a village down to LOW_FLOOR or fewer goes quiet — the raid rotation passes it by, its people who stay near home
+  // aren't scented, and at dawn a big village sends migrants to help it rebuild. Stragglers far from home are still fair game.
+  lowPlan() { for (const tr of this.tribes) { if (!tr.alive || tr.outcasts) continue; const n = tr.members.size, was = !!tr.lowLie;
+      if (!was && n <= LOW_FLOOR) { tr.lowLie = true; this.stats.lowLie = (this.stats.lowLie || 0) + 1; this.log(`${tr.name} is down to ${n} and lying low — doors shut, fires out, no scent on the wind.`, 'tribe'); }
+      else if (was && n >= LOW_FLOOR + 3) { tr.lowLie = false; this.log(`${tr.name} has recovered to ${n} and stopped lying low.`, 'tribe'); } } }
+  lyingLow(e) { const tr = e.tribe != null && this.tribes[e.tribe]; return !!(tr && tr.lowLie && tr.alive && (tr.members.size <= 2 || dist(e.x, e.z, tr.cx, tr.cz) < 30)); } // the last two are never hunted down
+  sendMigrants() { for (const T of this.tribes) { if (!T.alive || !T.lowLie || T.outcasts) continue; const big = this.tribes.filter(o => o.alive && !o.outcasts && !o.lowLie && o !== T && o.members.size >= 12).sort((a, b) => b.members.size - a.members.size)[0]; if (!big) continue;
+      const go = this.members(big).filter(e => e.kind === 't' && !e.bcu && !e.trade && e.guardOf == null && e.id !== big.chief && e.hp > 60).sort((a, b) => b.traits.social - a.traits.social).slice(0, 2); if (!go.length) continue;
+      for (const e of go) { if (e.inHut) this.leaveHut(e); e.home = null; e.act = null; this.join(e, T); this.stats.migrants = (this.stats.migrants || 0) + 1; } this.assignHomes(big); this.assignHomes(T);
+      this.log(`${go.map(e => e.name).join(' and ')} left ${big.name} at first light to help rebuild ${T.name}.`, 'tribe'); } }
+  guardPlan() { this.lowPlan(); for (const tr of this.tribes) { if (!tr.alive || tr.outcasts) { if (tr.guards) tr.guards.length = 0; continue; } tr.guards = (tr.guards || []).filter(id => { const g = this.byId.get(id); return g && g.alive && !g.exile && g.tribe === tr.id && !g.bcu; });
       const want = tr.members.size >= 8 ? 2 : tr.members.size >= 3 ? 1 : 0; while (tr.guards.length > want) { const g = this.byId.get(tr.guards.pop()); if (g) g.guardOf = null; }
       if (tr.guards.length < want) { const c = [...tr.members].map(id => this.byId.get(id)).filter(o => o && o.alive && o.kind === 't' && !o.exile && !o.bcu && !o.trade && o.guardOf == null && o.hp > 70).sort((a, b) => (b.traits.bravery || 0) - (a.traits.bravery || 0))[0];
         if (c) { c.guardOf = tr.id; tr.guards.push(c.id); this.gstats.appointed++; this.log(`${c.name} took up the watch as a guard of ${tr.name}${tr.guards.length > 1 ? ' (2 guards now stand watch)' : ''}.`, 'tribe'); } } } }
@@ -71,7 +85,7 @@ export class Sim {
     for (let tries = 0; n < 2 && tries < 200; tries++) { const a = this.rnd(6.28), r = 24 + this.rnd(20), x = Math.round(t.cx + Math.cos(a) * r), z = Math.round(t.cz + Math.sin(a) * r); if (x < 3 || z < 3 || x > W - 4 || z > D - 4) continue; const k = z * W + x;
       if (w.water[k] || w.water[k + 1] || w.water[k + W] || this.safeAt(x, z) || this.tribes.some(o => o.alive && dist(x, z, o.cx, o.cz) < 16) || this.hideouts.some(h => dist(x, z, h.x, h.z) < 10)) continue; const rg = w.region[k]; if (rg === RG.SEA || rg === RG.COAST) continue;
       const kind = rg === RG.HAUNT ? 'crypt' : ['cave', 'log', 'crypt'][(this.r() * 3) | 0], h = { id: this.hideouts.length, x: x + 0.5, z: z + 0.9, kind, v: (this.r() * 1000) | 0, occ: new Set(), cap: 3, added: true }; h.name = `${LBL[kind]} in ${w.regionAt(x, z)}`; this.hideouts.push(h); n++; this.stats.hideoutsAdded = (this.stats.hideoutsAdded || 0) + 1; } }
-  raidOrder() { const m = this.w.mansion; return this.tribes.filter(t => t.alive && !t.outcasts && t.members.size).sort((a, b) => { const ba = (Math.atan2(a.cz - m.z, a.cx - m.x) + 6.2832) % 6.2832, bb = (Math.atan2(b.cz - m.z, b.cx - m.x) + 6.2832) % 6.2832; return ba - bb || a.id - b.id; }); } // +angle with z down = clockwise on screen
+  raidOrder() { const m = this.w.mansion; const all = this.tribes.filter(t => t.alive && !t.outcasts && t.members.size), up = all.filter(t => !t.lowLie); return (up.length ? up : all).sort((a, b) => { const ba = (Math.atan2(a.cz - m.z, a.cx - m.x) + 6.2832) % 6.2832, bb = (Math.atan2(b.cz - m.z, b.cx - m.x) + 6.2832) % 6.2832; return ba - bb || a.id - b.id; }); } // +angle with z down = clockwise on screen
   raidPick() { const nk = this.nightKey(); if (this.raid && this.raid.nk === nk) return this.raid.t; const ord = this.raidOrder(); if (!ord.length) return null; const m = this.w.mansion;
     const prev = this.raid && this.raid.t, pb = prev ? (Math.atan2(prev.cz - m.z, prev.cx - m.x) + 6.2832) % 6.2832 : -1; let t = ord.find(o => ((Math.atan2(o.cz - m.z, o.cx - m.x) + 6.2832) % 6.2832) > pb + 1e-9 && o !== prev) || ord[0];
     this.raid = { nk, t, arrived: false }; this.ensureHideouts(t); (this.raidLog || (this.raidLog = [])).push({ day: this.day, nk, id: t.id, name: t.name }); this.log(`The vampires head for ${t.name} tonight.`, 'vamp'); return t; }
@@ -134,7 +148,7 @@ export class Sim {
   isNight() { const t = this.tod; return t < 0.22 || t > 0.78; }
   dayAmt() { const t = this.tod, s = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); }; return s(0.18, 0.3, t) * (1 - s(0.7, 0.82, t)); }
   stamp() { return (this.isNight() ? 'Night ' : 'Day ') + this.day; }
-  log(text, kind = 'info') { const L = { tick: this.tick, text: `${this.stamp()}: ${text}`, kind }; this.logs.push(L); if (this.logs.length > 400) this.logs.shift(); this.onLog && this.onLog(L); }
+  log(text, kind = 'info') { text = fixArticles(text); const L = { tick: this.tick, text: `${this.stamp()}: ${text}`, kind }; this.logs.push(L); if (this.logs.length > 400) this.logs.shift(); this.onLog && this.onLog(L); }
   rnd(a = 1, b) { return b === undefined ? this.r() * a : a + this.r() * (b - a); }
   // ---------- names ----------
   name() { const A = 'MTPZNBKRLGFWDSHV', V = ['i', 'o', 'a', 'u', 'e', 'oo', 'ee', 'y'], E = ['b', 'k', 'p', 'n', 'm', 't', 'g', 'x', 'z', 'ff', 'll', 'sh', ''];
@@ -445,14 +459,15 @@ export class Sim {
   }
   dawn() {
     for (const e of this.thronglets()) { e.lockedOut = false; e.ateEve = false; }
-    if (this.vamps().some(v => v.name === 'Stefan' && v.alive)) this.log(`At dawn, Stefan retreated to 83 Kingsway${this.storm ? ' as the storm blew itself out' : ''}.`, 'vamp'); this.storm = false;
+    if (this.vamps().some(v => v.name === 'Stefan' && v.alive)) this.log(`At dawn, Stefan retreated to 83 Kingsway${this.storm ? ' as the storm blew itself out' : ''}.`, 'vamp'); this.storm = false; this.lowPlan(); this.sendMigrants();
     for (const tr of this.tribes) {
       if (!tr.alive) continue; const m = this.members(tr); if (!m.length) continue;
       let chief = null, cs = -1e9; for (const e of m) { const s = this.rep(e) + e.traits.bravery * 10 + Math.min(10, (this.tick - e.born) / DAY * 2); if (s > cs) { cs = s; chief = e; } }
       if (chief && chief.id !== tr.chief) { tr.chief = chief.id; this.log(`${chief.name} is now the most respected voice in ${tr.name}.`, 'tribe'); }
       let births = 0; const pop = this.thronglets().length;
-      while (births < 2 && tr.stock.food >= m.length * 2 + 6 && m.length + births < tr.huts.reduce((a, h) => a + this.hutCap(h), 0) && pop + births < 160) {
-        const a = m[this.rnd(m.length) | 0], b = m.length > 1 ? m.filter(o => o !== a)[this.rnd(m.length - 1) | 0] : a; const mut = k => Math.max(0, Math.min(1, (a.traits[k] + b.traits[k]) / 2 + (this.r() - 0.5) * 0.3));
+      const bcap = pop < 46 ? 3 : 2; /* v0.11.1: gentle low-pop baby boom */
+      while (births < bcap && tr.stock.food >= m.length * 2 + 6 && m.length + births < tr.huts.reduce((a, h) => a + this.hutCap(h), 0) && pop + births < 160) {
+        if (m.length < 2) break; const a = m[this.rnd(m.length) | 0], b = m.filter(o => o !== a)[this.rnd(m.length - 1) | 0]; const mut = k => Math.max(0, Math.min(1, (a.traits[k] + b.traits[k]) / 2 + (this.r() - 0.5) * 0.3));
         const c = this.spawnThronglet(tr.cx + this.rnd(-2, 2), tr.cz + this.rnd(-2, 2), { greed: mut('greed'), loyalty: mut('loyalty'), bravery: mut('bravery'), social: mut('social') });
         this.join(c, tr); tr.stock.food -= 6; births++; this.stats.births++; this.assignHomes(tr);
         this.log(`A new Thronglet, ${c.name}, was born in ${tr.name} (child of ${a.name} & ${b.name}).`, 'birth');
@@ -473,7 +488,7 @@ export class Sim {
     if (e.tribe != null) { const tr = this.tribes[e.tribe]; tr.members.delete(e.id); this.assignHomes(tr); }
     if (e.kind === 't') { this.dropAll(e); }
     if (killer) { killer.kills++; this.stats.kills++; if (killer.kind === 'v') { const k = this.nightKey(); if (!this.nightKills || this.nightKills.k !== k) this.nightKills = { k, n: 0 }; this.nightKills.n++; } if (e.spottedAt && this.tick - e.spottedAt < 900) { this.pstats.spotKills++; } }
-    this.log(cause, 'death');
+    this.log(cause, 'death'); if (e.kind === 't') this.lowPlan();
   }
   dropAll(e) { }
   updateT(e) {
@@ -697,7 +712,7 @@ export class Sim {
     if (!this.vampNight()) return;
     const vs = this.vamps().filter(v => v.hp > 45 && v.state !== 'retreat'); if (!vs.length) return;
     this.detectHidden(vs);
-    const targets = this.thronglets().filter(e => !e.bcu && !e.inHut && !this.safeAt(e.x, e.z) && !e.hidden && !(e.swim && e.act && e.act.sp && dist(e.x, e.z, e.act.sp.x, e.act.sp.z) < 8));
+    const targets = this.thronglets().filter(e => !e.bcu && !e.inHut && !this.lyingLow(e) && !this.safeAt(e.x, e.z) && !e.hidden && !(e.swim && e.act && e.act.sp && dist(e.x, e.z, e.act.sp.x, e.act.sp.z) < 8));
     const leader = vs.find(v => v.name === 'Stefan') || vs[0];
     const np = vs.length >= 10 ? 4 : vs.length >= 7 ? 3 : vs.length >= 4 ? 2 : 1; const packs = Array.from({ length: np }, (_, k) => vs.filter((_, i) => i % np === k));
     const taken = new Set();
@@ -847,6 +862,7 @@ export class Sim {
       if (d < (gfast ? 4.5 : 3.2)) { v.bat = false; const k = Math.min(d, 0.85); v.x += (e.x - v.x) / (d || 1) * k; v.z += (e.z - v.z) / (d || 1) * k; v.dir = Math.atan2(e.x - v.x, e.z - v.z); v.walk += k; v.path = null; caught = dist(v.x, v.z, e.x, e.z) < 1.3; if (!v.lunged || this.tick - v.lunged > 60) { v.lunged = this.tick; } }
       else if (d > 10 || v.stuck > 6 || v.chaseBat > 0) { if (v.stuck > 6) { v.chaseBat = 25; v.stuck = 0; } if (v.chaseBat > 0) v.chaseBat--; this.fly(v, tx, tz, d > 18 ? 1.4 + 0.3 * this.threat() : 0.9); }
       else { v.bat = false; this.moveTo(v, tx, tz, gfast ? 0.85 : 0.55 + 0.12 * this.threat() * this.ease(), 1.0); }
+      if (caught && this.lyingLow(e) && dist(e.x, e.z, this.w.mansion.x, this.w.mansion.z) >= 34) { v.assign = null; return; }
       if (caught && e.guardOf != null && e.alive) { if (v.name === 'Stefan') { v.assign = null; return; } if (v.cool > 0) return; v.cool = 4; if (!e.rallied) { e.rallied = this.tick; this.rally(e, v); } if (this.tick - e.rallied < 25 && e.fear < 99) { const near = this.ents.filter(o => o.kind === 'v' && o !== v && o.alive && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) < 7); if (near.length && near.some(o => dist(o.x, o.z, e.x, e.z) > 2.5)) return; } e.rallied = 0; const sw = this.ents.filter(o => o.kind === 'v' && o.alive && o !== v && !o.batHome && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) < 7); this.resolveGuard(e, [v, ...sw]); return; }
       if (caught) {
         if (v.cool > 0) return; const tf = onTurf(e); v.cool = tf ? 3 : 4; // on 83 Kingsway's own grounds the coven is at its deadliest
