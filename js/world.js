@@ -75,7 +75,7 @@ export function makeAtlas() {
 export class World {
   constructor(seed) {
     this.seed = seed; this.data = new Uint8Array(W * H * D);
-    this.ground = new Uint8Array(W * D); this.stack = new Uint8Array(W * D); this.water = new Uint8Array(W * D);
+    this.ground = new Uint8Array(W * D); this.stack = new Uint8Array(W * D); this.water = new Uint8Array(W * D); this.rubble = new Uint8Array(W * D); // v0.12: ruin/outcrop rubble = floor decor, never blocks walkers
     this.dirty = new Set(); this.torches = new Map(); this.nodes = []; this.nodeAt = new Map(); this.gates = new Map();
     this.rng = mulberry32(seed * 7919 + 13);
     this.gen();
@@ -174,7 +174,7 @@ export class World {
     for (const s of this.regionSeeds) if (s.k === RG.RUINS) for (let i = 0; i < 9; i++) {
       const cx = Math.round(s.x + (r() - 0.5) * 50), cz = Math.round(s.z + (r() - 0.5) * 50), hw = 2 + (r() * 3 | 0), hd = 2 + (r() * 3 | 0); if (!this.inb(cx - 6, cz - 6) || !this.inb(cx + 6, cz + 6)) continue; if (this.water[cz * W + cx]) continue;
       for (let z = cz - hd; z <= cz + hd; z++) for (let x = cx - hw; x <= cx + hw; x++) { if (!(x === cx - hw || x === cx + hw || z === cz - hd || z === cz + hd)) continue; if (r() < 0.3 || this.water[z * W + x]) continue; const g = this.ground[z * W + x]; const hh = 1 + (r() < 0.5 ? 1 : 0);
-        for (let y = 0; y < hh; y++) this.data[this.idx(x, g + y, z)] = r() < 0.25 ? B.MOSS : B.COBBLE; }
+        for (let y = 0; y < hh; y++) this.data[this.idx(x, g + y, z)] = r() < 0.25 ? B.MOSS : B.COBBLE; this.rubble[z * W + x] = 1; }
       this.decor.push({ t: 'ruin', x: cx, z: cz, hw, hd }); this.addSpot('ruin', cx, cz);
     }
     // lake islet + dock
@@ -202,7 +202,7 @@ export class World {
   outcrop(x, z, g) {
     const r = this.rng, blocks = [];
     for (let i = 0; i < 6; i++) { const dx = (r() * 3 | 0) - 1, dz = (r() * 3 | 0) - 1, xx = x + dx, zz = z + dz; const gg = this.ground[zz * W + xx];
-      let y = gg; while (this.get(xx, y, zz) === B.STONE) y++; if (y > gg + 2 || this.get(xx, y, zz) !== 0) continue; this.data[this.idx(xx, y, zz)] = r() < 0.2 ? B.MOSS : B.STONE; blocks.push([xx, y, zz]); }
+      let y = gg; while (this.get(xx, y, zz) === B.STONE) y++; if (y > gg + 2 || this.get(xx, y, zz) !== 0) continue; this.data[this.idx(xx, y, zz)] = r() < 0.2 ? B.MOSS : B.STONE; this.rubble[zz * W + xx] = 1; blocks.push([xx, y, zz]); }
     if (blocks.length) this.addNode('stone', x, z, 12, blocks);
   }
   buildMansion(cx, cz) {

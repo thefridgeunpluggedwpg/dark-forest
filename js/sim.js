@@ -113,17 +113,23 @@ export class Sim {
   // ===== v0.11 village-to-village trade (by day only; traders are prey and never fight) =====
   tribeOf(e) { return e && e.tribe != null && !e.exile ? this.tribes[e.tribe] : null; }
   ofV(e) { const t = this.tribeOf(e); return t ? ` of ${t.name}` : ''; }
-  tradeNeeds(tr) { const n = Math.max(1, tr.members.size), s = tr.stock; return { food: { short: s.food < n * 2.5, spare: Math.floor(s.food - n * 3) }, wood: { short: s.wood < 8, spare: Math.floor(s.wood - 16) }, stone: { short: s.stone < 6, spare: Math.floor(s.stone - 12) }, reed: { short: s.reed < 3, spare: Math.floor(s.reed - 12) } }; }
-  tradePlan() { const t = this.tod; if (this.isNight() || t < 0.24 || t > 0.5) return; const TR = this.tribes.filter(tr => tr.alive && !tr.outcasts && tr.members.size >= 3 && !(tr.tradeDay === this.day));
-    for (const A of TR) { if (A.tradeDay === this.day) continue; const na = this.tradeNeeds(A);
-      for (const B of TR) { if (B === A || B.tradeDay === this.day) continue; const nb = this.tradeNeeds(B), d = dist(A.cx, A.cz, B.cx, B.cz);
+  tradeNeeds(tr) { const n = Math.max(1, tr.members.size), s = tr.stock; // v0.12: wider 'short' band + floors/caps so more goods move without emptying anyone
+    const mk = (have, short, keep, cap) => ({ short: have < short, low: have < short * 1.6, spare: Math.floor(have - keep), room: Math.floor(cap - have) });
+    return { food: mk(s.food, n * 3, n * 3.2, n * 9 + 40), wood: mk(s.wood, 12, 16, 90), stone: mk(s.stone, 9, 12, 70), reed: mk(s.reed, 5, 10, 50) }; }
+  tradesToday(tr) { return tr.tradeDay === this.day ? (tr.tradeN || 1) : 0; }
+  markTrade(tr) { if (tr.tradeDay === this.day) tr.tradeN = (tr.tradeN || 1) + 1; else { tr.tradeDay = this.day; tr.tradeN = 1; } }
+  tradePlan() { const t = this.tod; if (this.isNight() || t < 0.24 || t > 0.54) return; const MAXT = 2, busy = tr => this.ents.some(o => o.alive && o.trade && (o.trade.from === tr.id || o.trade.to === tr.id)); // v0.12: up to 2 day runs per village
+    const TR = this.tribes.filter(tr => tr.alive && !tr.outcasts && tr.members.size >= 3 && this.tradesToday(tr) < MAXT && !busy(tr));
+    for (const A of TR) { if (this.tradesToday(A) >= MAXT || busy(A)) continue; const na = this.tradeNeeds(A);
+      for (const B of TR) { if (B === A || this.tradesToday(B) >= MAXT || busy(B)) continue; const nb = this.tradeNeeds(B), d = dist(A.cx, A.cz, B.cx, B.cz);
         const left = (0.66 - t) * DAY, need = d * 3.0 / TRADE_SPEED + 40; if (need > left) continue; // must be home before dusk
-        let want = null, pay = null; for (const k of ['food', 'wood', 'stone', 'reed']) { if (!want && na[k].short && nb[k].spare >= 3) want = k; }
-        if (!want) continue; for (const k of ['wood', 'stone', 'reed', 'food']) { if (k !== want && na[k].spare >= 3 && nb[k].spare < 30) { pay = k; break; } } if (!pay) continue;
-        const get = Math.min(8, nb[want].spare), give = Math.min(8, na[pay].spare, Math.max(3, get)); if (get < 3 || give < 3) continue;
+        let want = null, pay = null; for (const k of ['food', 'wood', 'stone', 'reed']) { if (!want && na[k].short && nb[k].spare >= 3 && na[k].room >= 3) want = k; }
+        if (!want) for (const k of ['food', 'wood', 'stone', 'reed']) { if (!want && na[k].low && nb[k].spare >= 6 && na[k].room >= 3) want = k; }
+        if (!want) continue; for (const k of ['wood', 'stone', 'reed', 'food']) { if (k !== want && na[k].spare >= 3 && nb[k].room >= 3 && !nb[k].low) { pay = k; break; } } if (!pay) continue;
+        const get = Math.min(12, nb[want].spare, na[want].room), give = Math.min(12, na[pay].spare, nb[pay].room, Math.max(3, get)); if (get < 3 || give < 3) continue;
         const cand = [...A.members].map(id => this.byId.get(id)).filter(o => o && o.alive && !o.exile && !o.trade && !o.inHut && !o.hidden && !o.bcu && o.kind === 't' && o.hp > 60 && o.hunger < 55 && !(o.act && (o.act.type === 'flee' || o.act.type === 'build')));
         if (!cand.length) continue; cand.sort((a, b) => dist(a.x, a.z, A.cx, A.cz) - dist(b.x, b.z, B.cx, B.cz)); const pair = cand.slice(0, give >= 6 && cand.length > 4 ? 2 : 1);
-        A.stock[pay] -= give; A.tradeDay = B.tradeDay = this.day; const T = { from: A.id, to: B.id, leg: 'go', give: { k: pay, n: give }, get: { k: want, n: get }, start: this.tick };
+        A.stock[pay] -= give; this.markTrade(A); this.markTrade(B); const T = { from: A.id, to: B.id, leg: 'go', give: { k: pay, n: give }, get: { k: want, n: get }, start: this.tick };
         pair.forEach((o, i) => { o.trade = Object.assign({}, T, { lead: i === 0, give: { k: pay, n: i === 0 ? give : 0 }, get: { k: want, n: 0 } }); o.act = null; o.path = null; });
         this.log(`${pair.map(o => o.name).join(' and ')} of ${A.name} set out with ${give} ${pay} to trade with ${B.name}.`, 'trade'); break; } } }
   updateTrader(e) { const T = e.trade, A = this.tribes[T.from], B = this.tribes[T.to]; if (!A || !A.alive) { e.trade = null; return false; }
@@ -133,8 +139,8 @@ export class Sim {
     const late = this.tod > 0.66 || this.tod < 0.22; if (late && T.leg === 'go') { T.leg = 'home'; T.get = T.give; T.aborted = true; this.tstats.aborted++; }
     const tgt = T.leg === 'go' ? B : A; e.state = T.leg === 'go' ? 'trading → ' + B.name : 'heading home to ' + A.name; e.act = null;
     if (this.moveTo(e, tgt.cx, tgt.cz + 1.5, late ? 0.55 : TRADE_SPEED, 2.2)) {
-      if (T.leg === 'go') { if (T.lead) { const have = Math.max(0, Math.min(T.get.n || 8, Math.floor(B.stock[T.get.k] - 2))), got = Math.min(have, [8, 8][0]); const want = this.tribeOf(e) ? this.tradeNeeds(B)[T.get.k].spare : 0;
-          const n = Math.max(0, Math.min(got, want + 0, 8)); B.stock[T.give.k] += T.give.n; B.stock[T.get.k] -= n; T.get = { k: T.get.k, n };
+      if (T.leg === 'go') { if (T.lead) { const have = Math.max(0, Math.min(T.get.n || 12, Math.floor(B.stock[T.get.k] - 2))), got = Math.min(have, 12); const want = this.tribeOf(e) ? this.tradeNeeds(B)[T.get.k].spare : 0;
+          const n = Math.max(0, Math.min(got, want + 0, 12)); B.stock[T.give.k] += T.give.n; B.stock[T.get.k] -= n; T.get = { k: T.get.k, n };
           const key = [A.name, B.name].sort().join(' ↔ '); this.tstats.trades++; this.tstats.pairs[key] = (this.tstats.pairs[key] || 0) + 1; this.trades.push({ day: this.day, a: A.name, b: B.name, give: T.give, get: T.get });
           this.log(n > 0 ? `${A.name} traded ${T.give.n} ${T.give.k} to ${B.name} for ${n} ${T.get.k}.` : `${A.name} gave ${T.give.n} ${T.give.k} to ${B.name} as a gift — ${B.name} had nothing to spare in return.`, 'trade'); }
         T.leg = 'home'; return true; }
@@ -246,8 +252,9 @@ export class Sim {
       if (e.kind === 't') { if (e.banishing || e.tribe === g.tribe || (!this.isNight() && !(e.exTribe === g.tribe))) { g.open = 14; return true; } return false; }
       return g.open > 0 || !tr.alive;
     }
-    if (w.stack[k] > 1) return false;
-    if (w.top(x, z) - w.top(fx, fz) > 1) return false;
+    const rb = w.rubble && (w.rubble[k] || w.rubble[fz * W + fx]); // v0.12: rubble is floor decor — walkers step over it freely
+    if (w.stack[k] > 1 && !(w.rubble && w.rubble[k] && w.stack[k] <= 3)) return false;
+    if (w.top(x, z) - w.top(fx, fz) > (rb ? 3 : 1)) return false;
     return true;
   }
   standY(x, z) { const k = z * W + x; return this.w.gates.has(k) ? this.w.ground[k] : this.w.top(x, z); }
@@ -273,7 +280,12 @@ export class Sim {
   }
   moveTo(e, tx, tz, speed, arrive = 0.7) {
     const dx = tx - e.x, dz = tz - e.z, d = Math.hypot(dx, dz);
-    if (d < arrive) { e.path = null; return true; }
+    if (d < arrive) { e.path = null; e.prog = null; return true; }
+    // v0.12 unstick: walking but no real progress for 150 ticks → drop the plan, sidestep to an open neighbour, let the AI pick again
+    if (e.mvT !== this.tick - 1 || !e.prog || Math.hypot(e.x - e.prog.x, e.z - e.prog.z) > 1.5) e.prog = { x: e.x, z: e.z, t: this.tick }; e.mvT = this.tick;
+    if (this.tick - e.prog.t > 150) { e.prog = null; e.path = null; e.pathKey = -1; e.stuck = 0; e.act = null; this.stats.unstuck = (this.stats.unstuck || 0) + 1;
+      const cx0 = e.x | 0, cz0 = e.z | 0, opts = []; for (let r = 1; r <= 3 && !opts.length; r++) for (let oz = -r; oz <= r; oz++) for (let ox = -r; ox <= r; ox++) { const X = cx0 + ox, Z = cz0 + oz; if (Math.max(Math.abs(ox), Math.abs(oz)) === r && this.w.inb(X, Z) && this.passable(e, X, Z, X, Z) && !this.w.water[Z * W + X]) opts.push([X, Z]); }
+      if (opts.length) { const [X, Z] = opts[(this.r() * opts.length) | 0]; e.x = e.px = X + 0.5; e.z = e.pz = Z + 0.5; } return false; }
     const tkey = ((tz | 0) * W + (tx | 0));
     if (e.pathKey !== tkey) { e.path = null; e.pathKey = tkey; }
     let gx = tx, gz = tz;
@@ -377,7 +389,7 @@ export class Sim {
     if (cost && tr.stock[cost] < 1) return cost;
     if (cost) tr.stock[cost]--;
     const w = this.w;
-    if (bl.soft && w.stack[bl.z * W + bl.x] > 0) { } else w.set(bl.x, bl.y, bl.z, bl.b);
+    if (bl.soft && w.stack[bl.z * W + bl.x] > 0) { } else w.set(bl.x, bl.y, bl.z, bl.b); if (w.rubble) w.rubble[bl.z * W + bl.x] = 0; // built over: no longer rubble
     if (bl.gate) w.gates.set(bl.z * W + bl.x, { tribe: tr.id, open: 0, x: bl.x, z: bl.z });
     if (bl.farm) { const f = tr.farms.find(f => Math.abs(f.x - bl.x) <= 1 && Math.abs(f.z - bl.z) <= 1 && f.cells.length < 4); if (f) f.cells.push([bl.x, bl.z]); else tr.farms.push({ x: bl.x, z: bl.z, cells: [[bl.x, bl.z]], stage: -1, timer: 0 }); }
     if (job.type === 'wall' || job.type === 'repair' || job.type === 'fort') this.stats.wallBlocks++;
@@ -413,7 +425,7 @@ export class Sim {
     if (this.tick % 20 === 0) this.updateNodesAndFarms();
     if (this.tick % 10 === 0) this.vampPlan();
     if (this.tick % 25 === 0) { this.tradePlan(); this.guardPlan(); }
-    for (const e of this.ents) { if (!e.alive) continue; if (e.pathCool > 0) e.pathCool--; if (e.kind === 't') this.updateT(e); else if (e.kind === 'p') this.updateP(e); else if (e.kind === 'm') this.updateM(e); else this.updateV(e); e.y = this.standY(e.x | 0, e.z | 0); }
+    for (const e of this.ents) { if (!e.alive) continue; if (e.pathCool > 0) e.pathCool--; if (e.held || e.scripted) { if (e.held) { e.px = e.x; e.pz = e.z; } continue; } if (e.kind === 't') this.updateT(e); else if (e.kind === 'p') this.updateP(e); else if (e.kind === 'm') this.updateM(e); else this.updateV(e); e.y = this.standY(e.x | 0, e.z | 0); }
     // soft separation so crowds don't stack on one spot
     if (this.tick % 2 === 0) { const grid = new Map(); for (const e of this.ents) { if (!e.alive || e.kind !== 't') continue; const k = ((e.z | 0) >> 1) * 256 + ((e.x | 0) >> 1); let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(e); }
       for (const a of grid.values()) for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) { const p = a[i], q = a[j], dx = q.x - p.x, dz = q.z - p.z, d = Math.hypot(dx, dz);
@@ -483,6 +495,7 @@ export class Sim {
   die(e, cause, killer) {
     if (e.trade && e.alive) { const T = e.trade, g = T.leg === 'go' ? T.give : T.get; this.tstats.goodsLost += g.n; this.tstats.tradersLost++; e.trade = null; cause += ` The ${g.n} ${g.k} ${e.id % 2 ? 'she' : 'he'} carried for ${this.tribes[T.from].name} lay scattered on the path.`; }
     if (e.kind === 'v' && e.name === 'Stefan') { e.hp = Math.max(e.hp, 1); return; } // Stefan is immortal
+    if (e.held) { e.hp = Math.max(e.hp, 1); return; } // v0.12: nothing dies in the player's hand
     if (e.hidden) this.leaveSpot(e); if (e.inHut) { e.inHut.occ.delete(e.id); e.inHut = null; }
     e.alive = false; e.died = this.tick; this.stats.deaths++;
     if (e.tribe != null) { const tr = this.tribes[e.tribe]; tr.members.delete(e.id); this.assignHomes(tr); }
@@ -900,6 +913,52 @@ export class Sim {
     if (dist(v.x, v.z, v.prowl.x, v.prowl.z) > 25) this.fly(v, v.prowl.x, v.prowl.z, 0.9); else { v.bat = false; this.moveTo(v, v.prowl.x, v.prowl.z, 0.26); }
   }
   // ---------- god tools ----------
+  // ---------- v0.12: player trading (optional, tap a village → Trade) ----------
+  playerStock() { if (!this.pstock) this.pstock = { food: 24, wood: 24, stone: 24, reed: 24 }; return this.pstock; }
+  tradeOffers(tr) { // 1–2 clear offers; rates damped by scarcity, clamped 1:2 … 2:1, floors/caps respected, day only
+    if (!tr || !tr.alive || tr.outcasts || this.isNight() || this.tod < 0.24 || this.tod > 0.7) return [];
+    if (tr.pTradeDay === this.day && (tr.pTradeN || 0) >= 2) return []; const nd = this.tradeNeeds(tr), P = this.playerStock(), out = [];
+    const ks = ['food', 'wood', 'stone', 'reed'], wants = ks.filter(k => nd[k].low && nd[k].room >= 3).sort((a, b) => tr.stock[a] / (nd[a].room + tr.stock[a]) - tr.stock[b] / (nd[b].room + tr.stock[b]));
+    const gives = ks.filter(k => nd[k].spare >= 3).sort((a, b) => nd[b].spare - nd[a].spare);
+    for (const w of wants) for (const g of gives) { if (w === g || out.length >= 2 || out.some(o => o.give.k === g || o.get.k === w)) continue;
+      const scarce = Math.max(0.5, Math.min(2, (nd[g].spare + 3) / Math.max(3, nd[w].room * 0.4))); // more spare/greater need → better rate, clamped
+      const pay = Math.min(6, P[w], nd[w].room); if (pay < 2) continue; const get = Math.max(1, Math.min(nd[g].spare, Math.round(pay * scarce), 10)); out.push({ tr: tr.id, give: { k: w, n: pay }, get: { k: g, n: get } }); }
+    if (!out.length && P.food >= 3 && nd.food.room >= 3) { const g = gives[0]; if (g && g !== 'food') out.push({ tr: tr.id, give: { k: 'food', n: 3 }, get: { k: g, n: Math.min(3, nd[g].spare) } }); }
+    return out; }
+  playerTrade(o) { const tr = this.tribes[o.tr], P = this.playerStock(); const fresh = this.tradeOffers(tr).find(x => x.give.k === o.give.k && x.get.k === o.get.k); if (!fresh || P[fresh.give.k] < fresh.give.n) return false;
+    P[fresh.give.k] -= fresh.give.n; tr.stock[fresh.give.k] += fresh.give.n; tr.stock[fresh.get.k] -= fresh.get.n; P[fresh.get.k] = Math.min(99, P[fresh.get.k] + fresh.get.n);
+    if (tr.pTradeDay === this.day) tr.pTradeN = (tr.pTradeN || 0) + 1; else { tr.pTradeDay = this.day; tr.pTradeN = 1; }
+    this.pstatsTrade = this.pstatsTrade || { n: 0, goods: 0 }; this.pstatsTrade.n++; this.pstatsTrade.goods += fresh.give.n + fresh.get.n;
+    this.log(`You traded ${fresh.give.n} ${fresh.give.k} to ${tr.name} for ${fresh.get.n} ${fresh.get.k}.`, 'trade'); return fresh; }
+  playerAutoTrade() { for (const tr of this.tribes) { const o = this.tradeOffers(tr)[0]; if (o) this.playerTrade(o); } } // test/demo helper
+  // ---------- v0.12: pick up & drop anything that moves ----------
+  canGrab(e) { return !!(e && e.alive && ['t', 'v', 'p', 'm'].includes(e.kind) && !e.held); }
+  grab(e) { if (!this.canGrab(e)) return null;
+    if (e.inHut) { e.inHut.occ.delete(e.id); e.x = e.inHut.door.x; e.z = e.inHut.door.z; e.inHut = null; }
+    if (e.hidden) this.leaveSpot(e); if (e.hideout) this.leaveHideout(e); if (e.homePlan && e.homePlan.h) e.homePlan.h.occ.delete(e.id);
+    if (e.inMansion) { const D = this.doorPt(); e.inMansion = false; e.x = D.x; e.z = D.z + 0.6; }
+    e.heldFrom = { x: e.x, z: e.z, wasBat: !!(e.bat || e.batHome) }; e.held = true; e.bat = false; e.raidFly = false; e.path = null; e.act = null; if (e.kind === 'v') { e.assign = null; if (e.batHome) this.unBat(e); }
+    if (!Number.isFinite(e.x) || !Number.isFinite(e.z)) { e.x = this.w.mansion.x; e.z = this.w.mansion.z + 4; }
+    this.gstatsGrab = this.gstatsGrab || { grabs: 0, drops: 0, snapped: 0 }; this.gstatsGrab.grabs++; return e; }
+  carry(e, x, z) { if (!e || !e.held || !Number.isFinite(x) || !Number.isFinite(z)) return; e.x = e.px = Math.max(1, Math.min(W - 2, x)); e.z = e.pz = Math.max(1, Math.min(D - 2, z)); }
+  validDrop(e, x, z) { const w = this.w; if (!w.inb(x, z) || x < 1 || z < 1 || x > W - 2 || z > D - 2) return false; const k = z * W + x; if (w.water[k] || w.gates.has(k)) return false;
+    if (w.stack[k] > 0 && !(w.rubble && w.rubble[k] && w.stack[k] <= 3)) return false; // walls, huts, trees, the mansion: never land inside
+    const m = w.mansion; if (Math.abs(x + 0.5 - m.x) < 8 && Math.abs(z + 0.5 - m.z) < 7) return false;
+    for (const tr of this.tribes) for (const h of tr.huts) if (Math.abs(x - h.x) <= 1 && Math.abs(z - h.z) <= 1) return false; return true; }
+  snapDrop(e, x, z) { x = Number.isFinite(x) ? x : this.w.mansion.x; z = Number.isFinite(z) ? z : this.w.mansion.z + 6; let X = Math.max(1, Math.min(W - 2, x | 0)), Z = Math.max(1, Math.min(D - 2, z | 0));
+    if (this.validDrop(e, X, Z)) return { x: X + 0.5, z: Z + 0.5, snapped: Math.abs(X + 0.5 - x) > 0.75 || Math.abs(Z + 0.5 - z) > 0.75 };
+    for (let r = 1; r < 140; r++) { let best = null, bd = 1e9; for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) { if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue; const a = X + dx, b = Z + dz; if (!this.validDrop(e, a, b)) continue; const d = dx * dx + dz * dz; if (d < bd) { bd = d; best = { x: a + 0.5, z: b + 0.5, snapped: true }; } } if (best) return best; }
+    const m = this.w.mansion; return { x: m.x, z: m.z + 9, snapped: true }; }
+  drop(e, x, z, quiet) { if (!e || !e.held) return null; const p = this.snapDrop(e, x, z); e.held = false; e.x = e.px = p.x; e.z = e.pz = p.z; e.y = this.standY(e.x | 0, e.z | 0);
+    e.path = null; e.act = null; e.stuck = 0; e.pathCool = 0; e.fear = Math.min(100, (e.fear || 0) + (e.kind === 't' ? 30 : 0)); if (e.state && /flying|bat/.test(e.state)) e.state = 'idle';
+    this.gstatsGrab.drops++; if (p.snapped) this.gstatsGrab.snapped++;
+    if (e.kind === 't') { // re-home: a loner dropped inside a living village is taken in; everyone else will walk home
+      const tr = this.tribes.find(t => t.alive && !t.outcasts && dist(e.x, e.z, t.cx, t.cz) < RING_R + 2); if (tr && e.tribe == null && !e.exile) { this.join(e, tr); this.assignHomes(tr); this.log(`${tr.name} took in ${e.name}, who dropped out of the sky into their village.`, 'tribe'); }
+      if (e.trade) { const T = e.trade, A = this.tribes[T.from]; if (A && T.leg === 'home' && T.get && T.get.n && T.lead) { /* still carrying goods: keep the trip, just replan */ } } }
+    if (e.kind === 'v') { e.assign = null; e.homePlan = null; e.shD = this.shelterDist(e); if (!this.vampNight() && this.inShade(e.x, e.z)) e.state = 'returning'; } // sun rules unchanged: shade only near the mansion
+    if (!quiet) { const m = this.w.mansion, v = this.tribes.find(t => t.alive && !t.outcasts && dist(e.x, e.z, t.cx, t.cz) < RING_R + 8), to = v ? v.name : dist(e.x, e.z, m.x, m.z) < 30 ? '83 Kingsway' : this.w.regionAt(e.x, e.z).replace(/^the /, 'the ');
+      this.log(`You carried ${e.name} to ${to}${p.snapped ? ' (set down on the nearest solid ground)' : ''}.`, 'god'); }
+    return p; }
   godPenguin(x, z) { if (this.penguins().length >= BEDROOMS) { this.log(`Every bedroom at 83 Kingsway is full — no room for another penguin.`, 'god'); return null; } const p = this.spawnPenguin(x, z); this.log(`A god placed a penguin, ${p.name}, ${this.placeName(x, z)}.`, 'god'); return p; }
   godDrop(type, x, z) {
     const w = this.w; x |= 0; z |= 0; if (!w.inb(x, z) || w.water[z * W + x]) return false;

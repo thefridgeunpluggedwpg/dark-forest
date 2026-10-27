@@ -18,15 +18,27 @@ const screenOf = e => [innerWidth / 2 + ((e.rx ?? e.x) - cam.tx) * cam.scale, in
 // ---------- input (Pointer Events) ----------
 const ptrs = new Map(); let gesture = null, mode = 'select';
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() }); if (ptrs.size === 2) gesture = twoInfo(); });
+// v0.12: long-press (~350 ms) on any moving creature to pick it up, drag, release to drop. Short taps and pans are unchanged.
+const GRAB_MS = 350; let held = null;
+function tryGrab(p) { if (p.moved || ptrs.size !== 1 || held || mode !== 'select') return; const e = pickEntity(p.x, p.y); if (!e || !sim.canGrab(e)) return;
+  held = sim.grab(e); if (!held) return; p.grab = held; p.gdx = 0; p.gdy = 0; cam.follow = null; updateFollowUI(); try { navigator.vibrate && navigator.vibrate(15); } catch (_) { } canvas.style.cursor = 'grabbing'; moveHeld(p); }
+function moveHeld(p) { if (!held) return; const h = toWorld(p.x, p.y + Math.min(40, cam.scale * 0.9)); sim.carry(held, h.x, h.z); } // under the finger, a little below so the finger doesn't hide it
+function dropHeld(p, cancel) { if (!held) return; const e = held; held = null; canvas.style.cursor = ''; const h = cancel ? { x: e.heldFrom.x, z: e.heldFrom.z } : toWorld(p.x, p.y + Math.min(40, cam.scale * 0.9)); sim.drop(e, h.x, h.z); if (selected && selected !== e) renderInspector(); }
+canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); const p = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() }; ptrs.set(e.pointerId, p); if (ptrs.size === 2 && !held) gesture = twoInfo();
+  if (ptrs.size === 1) p.timer = setTimeout(() => tryGrab(p), GRAB_MS); else for (const q of ptrs.values()) clearTimeout(q.timer);
+  if (e.pointerType === 'mouse' && (e.shiftKey || e.altKey)) { clearTimeout(p.timer); tryGrab(p); } }); // desktop shortcut: shift/alt-click-drag grabs instantly
 canvas.addEventListener('pointermove', e => {
   const p = ptrs.get(e.pointerId); if (!p) return; const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
-  if (ptrs.size === 1) { if (!p.moved && Math.hypot(p.x - p.sx, p.y - p.sy) < 8) return; p.moved = true; pan(dx, dy); }
-  else if (ptrs.size === 2) { const g = twoInfo(); if (gesture) { zoomAt(gesture.d / Math.max(10, g.d), g.cx, g.cy); pan(g.cx - gesture.cx, g.cy - gesture.cy); } gesture = g; for (const q of ptrs.values()) q.moved = true; }
+  if (p.grab) { moveHeld(p); return; } if (held) return; // second finger while carrying: ignore
+  if (ptrs.size === 1) { if (!p.moved && Math.hypot(p.x - p.sx, p.y - p.sy) < 8) return; p.moved = true; clearTimeout(p.timer); pan(dx, dy); }
+  else if (ptrs.size === 2) { const g = twoInfo(); if (gesture) { zoomAt(gesture.d / Math.max(10, g.d), g.cx, g.cy); pan(g.cx - gesture.cx, g.cy - gesture.cy); } gesture = g; for (const q of ptrs.values()) { q.moved = true; clearTimeout(q.timer); } }
 });
-const endPtr = e => { const p = ptrs.get(e.pointerId); if (!p) return; ptrs.delete(e.pointerId); if (ptrs.size < 2) gesture = null;
-  if (!p.moved && e.type === 'pointerup' && performance.now() - p.t < 600 && ptrs.size === 0) tap(e.clientX, e.clientY); };
+const endPtr = e => { const p = ptrs.get(e.pointerId); if (!p) return; clearTimeout(p.timer); ptrs.delete(e.pointerId); if (ptrs.size < 2) gesture = null;
+  if (p.grab) { dropHeld(p, false); return; }
+  if (!p.moved && e.type === 'pointerup' && performance.now() - p.t < GRAB_MS + 250 && ptrs.size === 0 && !held) tap(e.clientX, e.clientY); };
 canvas.addEventListener('pointerup', endPtr); canvas.addEventListener('pointercancel', endPtr);
+// edge auto-pan while carrying, so you can carry a creature across the island on a phone
+function edgePan(dt) { if (!held) return; const p = [...ptrs.values()].find(q => q.grab); if (!p) return; const m = 40, v = 420 * dt; let dx = 0, dy = 0; if (p.x < m) dx = v; else if (p.x > innerWidth - m) dx = -v; if (p.y < m + 50) dy = v; else if (p.y > innerHeight - m) dy = -v; if (dx || dy) { pan(dx, dy); moveHeld(p); } }
 canvas.addEventListener('wheel', e => { e.preventDefault(); zoomAt(Math.exp(e.deltaY * 0.0012), e.clientX, e.clientY); }, { passive: false });
 function zoomAt(f, sx, sy) { const before = toWorld(sx, sy); cam.dist = Math.max(cam.MIN, Math.min(cam.MAX, cam.dist * f)); const after = toWorld(sx, sy); if (!cam.follow) { cam.tx += before.x - after.x; cam.tz += before.z - after.z; } }
 function twoInfo() { const [a, b] = [...ptrs.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 }; }
@@ -37,6 +49,7 @@ function keyMove(dt) { const sp = cam.dist * 0.9 * dt; let fx = 0, fz = 0; if (k
 function pickEntity(cx, cy) { let best = null, bd = 44; for (const e of sim.ents) { if (!e.alive || e.inHut) continue; const [sx, sy] = screenOf(e); const d = Math.hypot(sx - cx, sy - cy - (e.kind === 'v' ? -cam.scale * 0.6 : e.kind === 'p' ? -cam.scale * 0.4 : e.kind === 'm' ? -cam.scale * 0.6 : 0)); if (d < bd) { bd = d; best = e; } } return best; }
 function tap(x, y) {
   if (mode === 'select') { const e = pickEntity(x, y); if (e) select(e, true); else { const h = toWorld(x, y), m = world.mansion; let hut = null; for (const tr of sim.tribes) for (const hh of tr.huts) if (Math.abs(h.x - hh.x - 0.5) < 2 && h.z > hh.z - 2.5 && h.z < hh.z + 2.2) hut = { kind: 'hut', alive: true, h: hh, tr, name: tr.name + ' hut' };
+    if (!hut) for (const tr of sim.tribes) if (tr.alive && !tr.outcasts && tr.huts.length && Math.hypot(h.x - tr.cx, h.z - tr.cz) < 11) hut = { kind: 'hut', alive: true, h: tr.huts[0], tr, name: tr.name + ' hut' }; // v0.12: tap anywhere in a village to trade
     if (hut) select(hut, false); else if (Math.abs(h.x - m.x) < 10 && h.z > m.z - 12 && h.z < m.z + 10) select({ kind: 'house', alive: true, name: '83 Kingsway' }, false); else select(null); } return; }
   const h = toWorld(x, y); if (!world.inb(h.x | 0, h.z | 0)) return;
   if (mode === 'spawn') { const e = sim.godSpawn(h.x, h.z); select(e, false); }
@@ -53,7 +66,7 @@ document.querySelectorAll('.panel').forEach(p => { p.querySelector('.tab').oncli
 $('#hideAll').onclick = () => { $('#ui').classList.toggle('hideall'); $('#hideAll').classList.toggle('on'); };
 let speed = 1; function setSpeed(s) { speed = s; document.querySelectorAll('[data-speed]').forEach(b => b.classList.toggle('on', +b.dataset.speed === s)); }
 document.querySelectorAll('[data-speed]').forEach(b => b.onclick = () => setSpeed(+b.dataset.speed));
-const HINTS = { select: 'Tap a creature to follow it. Drag to pan; wheel or pinch to zoom; two fingers to pan.', spawn: 'Tap the ground to place a new Thronglet.', spawnP: 'Tap the ground to place a penguin (max 10 — one per mansion bedroom).', spawnV: 'Tap the ground to summon a vampire. It lives at 83 Kingsway (vampire rooms are separate from the 10 penguin bedrooms). By day it returns home.' };
+const HINTS = { select: 'Tap a creature to follow it. Press and hold one to pick it up, then drag and let go to drop it. Tap a village to trade. Drag to pan; wheel or pinch to zoom; two fingers to pan.', spawn: 'Tap the ground to place a new Thronglet.', spawnP: 'Tap the ground to place a penguin (max 10 — one per mansion bedroom).', spawnV: 'Tap the ground to summon a vampire. It lives at 83 Kingsway (vampire rooms are separate from the 10 penguin bedrooms). By day it returns home.' };
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; document.querySelectorAll('[data-mode]').forEach(o => o.classList.toggle('on', o === b)); $('#modeHint').textContent = HINTS[mode] || `Tap the ground to drop ${mode.slice(5)}.`; });
 $('#btnTumnus').onclick = () => { if (sim.tumnus && sim.tumnus.alive) select(sim.tumnus, true); };
 $('#btnUnfollow').onclick = () => { cam.follow = null; updateFollowUI(); };
@@ -61,13 +74,19 @@ $('#btnReset').onclick = () => reset(+$('#seed').value || 1);
 $('#btnFull').onclick = async () => { try { if (!document.fullscreenElement) { await (document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }) ?? document.documentElement.webkitRequestFullscreen?.()); try { await screen.orientation?.lock?.('landscape'); } catch (_) { } } else await document.exitFullscreen(); } catch (_) { } };
 function addLogLine(L) { const d = document.createElement('div'); d.className = 'k-' + L.kind; d.textContent = L.text; const list = $('#logList'); list.prepend(d); while (list.childElementCount > 150) list.lastChild.remove(); }
 const fmt = v => (v > 0 ? '+' : '') + v.toFixed(0);
+function tradeBox(tr) { // v0.12 optional player trading: 1–2 clear offers, day only
+  if (!tr || !tr.alive) return ''; const P = sim.playerStock(), offers = sim.tradeOffers(tr), ic = { food: '🍓', wood: '🪵', stone: '🪨', reed: '🌾' };
+  const st = k => `${ic[k]}${tr.stock[k] | 0}`; let h = `<div class="trade"><b>🤝 Trade with ${tr.name}</b><br><small>Village: ${['food', 'wood', 'stone', 'reed'].map(st).join(' ')} · You: ${['food', 'wood', 'stone', 'reed'].map(k => ic[k] + P[k]).join(' ')}</small><br>`;
+  if (!offers.length) h += `<small>${sim.isNight() ? 'Gates are barred — trade by day.' : 'Nothing to trade right now.'}</small>`;
+  offers.forEach((o, i) => { h += `<button class="tradeBtn" data-offer="${i}" data-tr="${tr.id}">Give ${o.give.n} ${ic[o.give.k]} ${o.give.k} → get ${o.get.n} ${ic[o.get.k]} ${o.get.k}</button>`; }); return h + '</div>'; }
 function bar(label, v, c) { return `${label}<div class="bar"><i style="width:${Math.max(0, Math.min(100, v))}%;background:${c}"></i></div>`; }
+document.addEventListener('click', ev => { const b = ev.target.closest && ev.target.closest('.tradeBtn'); if (!b) return; const tr = sim.tribes[+b.dataset.tr], o = sim.tradeOffers(tr)[+b.dataset.offer]; if (o) sim.playerTrade(o); renderInspector(); });
 function renderInspector() {
   const e = selected; if (!e) return; const body = $('#inspBody');
   if (e.kind === 'house') { $('#inspTitle').textContent = '🏚 83 Kingsway'; const vs = sim.vamps().filter(v => v.alive); const home = vs.filter(v => Math.hypot(v.x - world.mansion.x, v.z - world.mansion.z) < 10).length;
     body.innerHTML = `<img src="assets/kingsway.jpg" alt="83 Kingsway" style="width:100%;border:2px solid #5a3a22;border-radius:4px;image-rendering:pixelated"><br>📍 <b>The Haunted Heart</b> · Stefan's old home<br>Vampires: <b>${vs.length}</b> (${home} at home)<br>🐧 Penguin bedrooms: <b>${sim.penguins().length}/10</b> used · BlackCardU converts: ${sim.pstats.conversions}${sim.storm && sim.isNight() ? '<br>⛈ <b>Storm tonight</b> — the rain masks noise; hiders are harder to find.' : ''}<br><i>A light is always on at 83 Kingsway.</i>`; return; }
   if (e.kind === 'hut') { const h = e.h, cap = sim.hutCap(h), occ = [...h.occ].map(id => sim.byId.get(id)).filter(Boolean), own = h.owners.map(id => sim.byId.get(id)).filter(Boolean);
-    $('#inspTitle').textContent = '🛖 ' + e.tr.name + ' hut'; body.innerHTML = `📍 <b>${e.tr.name}</b> · ${h.level >= 2 ? 'stone' : 'timber'} hut<br>Inside: <b>${occ.length}/${cap}</b>${occ.length ? ' — ' + occ.map(o => o.name).join(', ') : ''}<br>Sleeps here: ${own.map(o => o.name).join(', ') || '—'}<br>🔒 Safe inside — vampires never enter a hut.`; return; }
+    $('#inspTitle').textContent = '🛖 ' + e.tr.name + ' hut'; body.innerHTML = `📍 <b>${e.tr.name}</b> · ${h.level >= 2 ? 'stone' : 'timber'} hut<br>Inside: <b>${occ.length}/${cap}</b>${occ.length ? ' — ' + occ.map(o => o.name).join(', ') : ''}<br>Sleeps here: ${own.map(o => o.name).join(', ') || '—'}<br>🔒 Safe inside — vampires never enter a hut.` + tradeBox(e.tr); return; }
   if (!e.alive) { $('#inspTitle').textContent = e.name + ' †'; body.innerHTML = '<i>Deceased.</i>'; return; }
   if (e.kind === 'm') { $('#inspTitle').textContent = '🧣 Ian Tumnus'; body.innerHTML = `<img class="portrait" src="assets/tumnus.png" alt="">📍 <b>${Math.hypot(e.x - world.mansion.x, e.z - world.mansion.z) < 14 ? '83 Kingsway grounds' : world.regionAt(e.x, e.z).replace(/^the /, '')}</b><br>Role: <b>Penguin Manager, BlackCardU</b><br>Doing: <b>${e.state}</b><br>Current orders: ${e.orders}<br>Penguins managed: <b>${sim.penguins().length}</b> (${sim.penguins().length}/10 bedrooms)<br>His conversions: <b>${e.conv}</b> · Penguins caught slacking: <b>${e.caught || 0}</b> · Thronglets snitched: ${e.snitches || 0}<br><i>Not a vampire: unhurt by the sun, never enters huts, has his own room at 83 Kingsway.</i>`; return; }
   if (e.kind === 'p') { $('#inspTitle').textContent = '🐧 ' + e.name; const ST = { napping: 'napping (slacking!)', sliding: 'belly-sliding (slacking!)', fishing: 'fishing (slacking!)', summoned: 'summoned to 83 Kingsway', scolded: 'being scolded', grounded: 'grounded — no outing today', scouting: 'scouting for prey', signalling: 'signalling a vampire', recruiting: 'recruiting for BlackCardU', pitching: 'pitching BlackCardU', returning: 'returning to 83 Kingsway', resting: 'resting at 83 Kingsway' };
@@ -129,12 +148,12 @@ function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   acc += dt * 1000 * speed; let n = 0; const maxT = 48; while (acc >= DT && n < maxT) { sim.step(); acc -= DT; n++; } if (n >= maxT) acc = 0;
-  R.flush(); keyMove(dt); applyCam(dt);
+  R.flush(); keyMove(dt); edgePan(dt); applyCam(dt);
   R.render(cam, Math.min(1, acc / DT), dt, selected, renderScale); frames++; MM.draw(now);
   if (now - fpsT > 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; $('#stFps').textContent = fps.toFixed(0) + ' fps'; updateTop(); renderInspector(); window.DF.fps = fps; if (!window.DF.lockScale && fps < 32 && renderScale > 1) { renderScale = Math.max(1, renderScale - 0.25); resize(); } }
 }
 $('#btnLabels').onclick = () => { R.showLabels = !R.showLabels; $('#btnLabels').classList.toggle('on', R.showLabels); };
-window.DF = { cam, renderer: R, get speed() { return speed; }, setSpeed, select, flushChunks, setMode: m => document.querySelector(`[data-mode="${m}"]`)?.click(),
+window.DF = { get held() { return held; }, cam, renderer: R, get speed() { return speed; }, setSpeed, select, flushChunks, setMode: m => document.querySelector(`[data-mode="${m}"]`)?.click(),
   selectedName: () => selected && selected.name, screenOf, fast(n) { for (let i = 0; i < n; i++) sim.step(); }, setScale(s) { renderScale = s; window.DF.lockScale = true; resize(); }, reset };
 reset(42); resize(); if (innerHeight < 500) { $('#tools').classList.add('collapsed'); $('#log').classList.add('collapsed'); }
 document.fonts?.load?.('16px "Pixelify Sans"'); document.fonts?.load?.('20px "Jacquard 12"');

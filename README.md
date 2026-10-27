@@ -123,9 +123,16 @@ At dusk (around 16:00 on the in-game clock), each tribe calls its people home. M
 - **Clockwise raid rotation**: villages are sorted by bearing around 83 Kingsway. Each night the coven's main pack (all but ~1 in 4 opportunists) flies out in bat form to the next village clockwise and materializes at its edge. Far-flung vampires head home early: to the door if it's in reach, otherwise to the nearest forest hideout. Extra hideouts are added near raid sites if needed.
 - Tests: `test/raid.mjs`, `test/defender.mjs` (with the name check), `test/trade.mjs`, `test/dawn.mjs`, `test/v011shots.mjs`.
 
-## v0.11.1 (local, awaiting approval; cache dark-forest-v9, not pushed)
+## v0.11.1 (published, cache dark-forest-v9)
 - **Mini-map labels**: bigger font on dark rounded pills, labels nudged apart so they never overlap (with a leader line if moved far), kept inside the frame. The mini-map is now 260 px (150 px on short screens).
 - **No village wipeouts ("lying low")**: a village down to 5 or fewer members lies low. The raid rotation passes it by, and its people within 30 tiles of home aren't hunted (the last 2 aren't hunted anywhere). Each dawn the biggest village (12+) sends 2 migrants to help it rebuild. It stops lying low at 8. Births now need two different parents (fixes "child of Nyb & Nyb").
 - **Population floor**: the nightly kill budget is 0 below 28 Thronglets for the first 4 days and below 41 on days 5–10 and below 39 after that, plus up to 3 births per village per dawn while the island is under 46, so the island holds ~40+.
 - **a/an**: every feed line goes through `fixArticles()` ("an Emberfall door", "An Oakhollow guard").
 - Test: `test/villages.mjs` (no wipeouts, min village size, min pop after day 7; seeds 7, 42, 123, 1, 99).
+
+## v0.12 — pick up anything, rubble fix, more trade (local, cache dark-forest-v10, not pushed)
+- **Pick up & drop**: press and hold (~350 ms) any creature (Thronglets, outcasts, vampires, bats mid-flight, Stefan, penguins, Ian Tumnus), drag, let go. On desktop, press-hold too (or shift/alt-click-drag). Short taps, one-finger pan and pinch zoom work as before. The held creature lifts with a glow ring and a ground shadow, the screen edge auto-pans while carrying, and the feed says "You carried Stefan to Emberfall."
+- Drops never land in water, walls, huts, the mansion or off the map; they snap to the nearest solid ground. A held creature's AI is paused (and it can't be killed in your hand); after the drop it replans. A loner dropped into a village is taken in. Vampires keep the existing sun rules (shade only near 83 Kingsway; by day they bat home); Stefan stays immortal.
+- **Rubble is floor**: ruin and rock-outcrop rubble no longer blocks walkers, and a walker that makes no progress for 150 ticks sidesteps and replans.
+- **More trade**: up to 2 day-only runs per village per day, loads up to 12, a wider "running low" band, and floors/caps so nobody trades itself empty or hoards past a cap. **Optional player trading**: tap a village, then one of 1–2 offers. Rates are damped by scarcity (clamped 1:2 to 2:1), 2 trades per village per day, by day only.
+- Tests: `test/grab.mjs`, `test/rubble.mjs`, `test/stuck.mjs`, `test/tradestats.mjs`, `test/grabphone.mjs` (Chromium, landscape phone 844×390, touch).

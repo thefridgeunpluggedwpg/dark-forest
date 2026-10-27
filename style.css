@@ -58,3 +58,10 @@ html,body{overscroll-behavior:none;overflow:hidden;position:fixed;inset:0;-webki
 
 #minimap{position:fixed;right:max(6px,env(safe-area-inset-right));bottom:max(6px,env(safe-area-inset-bottom));width:min(260px,32vw);height:min(260px,32vw);border:3px solid #3a2a14;border-radius:6px;box-shadow:0 3px 10px rgba(0,0,0,.5);image-rendering:pixelated;z-index:5;cursor:crosshair;background:#1d3f5e}
 @media (max-height:500px){#minimap{width:150px;height:150px}}
+
+/* v0.12: grab feed + optional trade */
+.k-god{color:#b8860b;font-weight:600}
+.trade{margin-top:6px;padding:6px;border:1px solid #c9a227;border-radius:6px;background:rgba(201,162,39,.08)}
+.tradeBtn{display:block;width:100%;min-height:44px;margin-top:6px;font:inherit;font-size:15px;border-radius:8px;border:2px solid #8a6a1a;background:#2a1f10;color:#ffe9a8;cursor:pointer}
+.tradeBtn:active{transform:scale(.98)}
+#c{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}

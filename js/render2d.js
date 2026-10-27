@@ -223,7 +223,7 @@ export class Renderer {
       for (const f of tr.farms) for (const [fx, fz] of f.cells) if (inV(fx, fz)) { for (const [dx, dz, hz] of [[0, -1, 1], [0, 1, 1], [-1, 0, 0], [1, 0, 0]]) { if (f.cells.some(([a, b]) => a === fx + dx && b === fz + dz)) continue; list.push({ t: 'rail', x: fx + 0.5 + dx * 0.5, z: fz + 0.5 + dz * 0.5 + (dz > 0 ? 0.02 : 0), hz }); } }
     }
     const M = this.M; if (inV(M.cx, M.cz, 30)) list.push({ t: 'mansion', x: M.cx, z: M.z1 + 1 });
-    for (const e of sim.ents) { if (!e.alive && !(e.died && sim.tick - e.died < 30)) continue; if (e.inMansion) continue; const x = e.px + (e.x - e.px) * alpha, z = e.pz + (e.z - e.pz) * alpha; e.rx = x; e.rz = z; if (!inV(x, z) || e.inHut) continue; if (e.kind === 'v' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z) < 4) continue; if (e.kind === 'p' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z - 3) < 4 && sim.isNight() === false && sim.tod > 0.64) continue; list.push({ t: e.kind === 'v' ? 'vamp' : e.kind === 'p' ? 'peng' : e.kind === 'm' ? 'tum' : 'thr', x, z: z + 0.3, e }); }
+    for (const e of sim.ents) { if (!e.alive && !(e.died && sim.tick - e.died < 30)) continue; if (e.inMansion) continue; const x = e.px + (e.x - e.px) * alpha, z = e.pz + (e.z - e.pz) * alpha; e.rx = x; e.rz = e.held ? z - 0.75 : z; /* v0.12: held creatures float up */ if (!inV(x, z) || e.inHut) continue; if (e.kind === 'v' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z) < 4) continue; if (e.kind === 'p' && e.state === 'resting' && Math.hypot(x - w.mansion.x, z - w.mansion.z - 3) < 4 && sim.isNight() === false && sim.tod > 0.64) continue; list.push({ t: e.kind === 'v' ? 'vamp' : e.kind === 'p' ? 'peng' : e.kind === 'm' ? 'tum' : 'thr', x, z: z + 0.3, e }); }
     if (far) { const keep = new Set(['hut', 'hideout', 'mansion', 'wall', 'gate', 'vamp', 'thr', 'peng', 'tum', 'fire', 'tree', 'dead']); for (let i = list.length - 1; i >= 0; i--) if (!keep.has(list[i].t) || (list[i].t === 'tree' || list[i].t === 'dead') && cam.scale < 3) { list[i] = list[list.length - 1]; list.pop(); } }
     list.sort((a, b) => a.z - b.z);
     // ---------- v0.9: the mansion's shadow (vampire sun-immunity zone), shown by day ----------
@@ -319,6 +319,12 @@ export class Renderer {
     else this.flash = 0;
     // ---------- overlay: selection, labels ----------
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    for (const e of sim.ents) if (e.held && e.alive && e.rx !== undefined) { // v0.12 grab highlight: ground shadow + pulsing glow ring
+      const X = ox + e.rx * s, Yg = oy + (e.rz + 0.75 + 0.42) * s, Y = oy + (e.rz + 0.2) * s, pu = 0.5 + 0.5 * Math.sin(t * 8);
+      ctx.fillStyle = 'rgba(0,0,0,.38)'; ctx.beginPath(); ctx.ellipse(X, Yg, s * 0.5, s * 0.2, 0, 0, 6.283); ctx.fill();
+      const g = ctx.createRadialGradient(X, Y, s * 0.1, X, Y, s * (1.6 + 0.2 * pu)); g.addColorStop(0, 'rgba(255,240,150,.85)'); g.addColorStop(1, 'rgba(255,236,140,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(X, Y, s * (1.6 + 0.2 * pu), 0, 6.283); ctx.fill();
+      ctx.strokeStyle = '#fff3a0'; ctx.lineWidth = Math.max(3, s / 8); ctx.beginPath(); ctx.ellipse(X, Yg, s * (0.62 + 0.06 * pu), s * (0.3 + 0.03 * pu), 0, 0, 6.283); ctx.stroke();
+      this.label(ctx, '✋ ' + e.name, X, Y - s * (e.kind === 'v' ? 2.1 : 1.4), Math.max(12, Math.min(18, s / 3)) * dpr, '#fff3a0'); }
     if (sel && sel.alive !== undefined && sel.rx !== undefined) { const X = ox + sel.rx * s, Y = oy + (sel.rz + 0.42) * s; ctx.strokeStyle = '#ffe066'; ctx.lineWidth = Math.max(2, s / 12); ctx.setLineDash([s / 5, s / 7]); ctx.lineDashOffset = -t * 20; ctx.beginPath(); ctx.ellipse(X, Y, s * 0.55, s * 0.3, 0, 0, 6.283); ctx.stroke(); ctx.setLineDash([]);
       this.label(ctx, sel.name, X, Y - s * (sel.kind === 'v' ? 2.3 : 1.5), Math.max(11, Math.min(18, s / 3)) * dpr, '#ffe9a8'); }
     if (this.showLabels) this.regionLabels(ctx, ox, oy, s, dpr, cam);
