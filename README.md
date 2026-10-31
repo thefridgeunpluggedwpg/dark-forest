@@ -1,5 +1,9 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.2
+- Snowy NW peak close-up redrawn: smooth wind-sculpted drifts with soft blue-grey shadows, sparkle, rocks poking through at the snow line; snow edge follows smoothed height, so no square tile blocks. Seamless, built once per chunk.
+- Close-up grey mountain rock is tinted toward the painted far map's local colour (low-pass of full_4608.jpg), e.g. ash-brown/charcoal near the volcano. Boulder/slab shapes unchanged. Cache bumped to dark-forest-v34.
+
 ## v0.13.1
 - Mountain rock no longer looks like brickwork: zoomed-in rock is now irregular boulders and slabs (warped Voronoi) with organic cracks, soft shading, scree pebbles, moss/lichen on lower slopes; the NW snowy peak uses the same look with snow caps. Seamless across tiles. Cache bumped to dark-forest-v33.
 

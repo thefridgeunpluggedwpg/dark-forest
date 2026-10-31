@@ -37,7 +37,7 @@ export class Renderer {
     // v0.21 terrain detail: landmark pictures cut (with Kyler's permission) from his own Grok Imagine reference island (26875_7_647f.jpg), masked to an ellipse so they blend into the ground instead of showing a rectangle. Drawn over the ground in render(), so they appear in both close and far views, under characters.
     this.ref = {}; for (const key of ['volcano', 'jungle', 'snow', 'swamp']) // v0.24: mountain landmark was loaded but never drawn, dropped to save size/memory { const im = new Image(); im.onload = () => { this.ovDirty = true; }; im.src = `assets/ref/${key}.png`; this.ref[key] = im; }
     // v0.22 far map: Kyler's full reference island, pixelated to 1536x1536 (3x3 pixels per game tile, v0.24) so far view is his image, in pixel form, matching the game's pixel terrain instead of a smooth photo that would pop when you zoom in.
-    this.refFull = new Image(); this.refFull.onload = () => { this.ovDirty = true; }; this.refFull.src = 'assets/ref/full_4608.jpg'; // v0.24: 4608 = 512 x 9, so each game tile now has 9x9 pixels instead of 1, far map stays sharp when you zoom in — true detail is still capped at the original 1408 image, so x9 is smoother interpolation, not new detail, but blocks shrink from 16 art px to ~2 art px
+    this.refFull = new Image(); this.refFull.onload = () => { this.ovDirty = true; this.makePaint(); }; this.refFull.src = 'assets/ref/full_4608.jpg'; // v0.24: 4608 = 512 x 9, so each game tile now has 9x9 pixels instead of 1, far map stays sharp when you zoom in — true detail is still capped at the original 1408 image, so x9 is smoother interpolation, not new detail, but blocks shrink from 16 art px to ~2 art px
     this.dirLod = {}; for (const key of ['thronglet', 'guard', 'penguin', 'vampire', 'tumnus', 'bat']) { this.dirLod[key] = {}; for (const d of ['south', 'south-east', 'east', 'north-east', 'north', 'north-west', 'west', 'south-west']) { this.dirLod[key][d] = []; for (const h of [24, 48, 96, 192, 'full']) { const im = new Image(); im.onload = () => { this.dirLod[key][d].push(im); this.dirLod[key][d].sort((a, b) => a.height - b.height); }; im.src = `assets/dir/${key}/${d}${h === 'full' ? '' : '_' + h}.png`; } } } }
   pick(n, px) { const L = this.lod[n]; for (const im of L) if (im.height >= px) return im; return L[L.length - 1]; }
   dirFor(e) { const dirs = ['south', 'south-east', 'east', 'north-east', 'north', 'north-west', 'west', 'south-west']; return dirs[((Math.round((e.dir || 0) / (Math.PI / 4)) % 8) + 8) % 8]; }
@@ -68,6 +68,8 @@ export class Renderer {
     for (const d of world.decor) if (d.t === 'dock') this.decor.push({ t: 'dockpost', x: d.x + 0.2, z: d.z + 1 });
     this.mansionArt = null; this.dirtyAll = true;
   }
+  // v0.13.2: low-pass colour of the painted far map (128x128, 4 tiles per px) so close-up rock takes the painting's local tones
+  makePaint() { try { const a = cv(512, 512), ga = a.getContext('2d'); ga.imageSmoothingQuality = 'high'; ga.drawImage(this.refFull, 0, 0, 512, 512); const c = cv(128, 128), g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.filter = 'blur(1.5px)'; g.drawImage(a, 0, 0, 128, 128); PAINT = g.getImageData(0, 0, 128, 128).data; this.chunks.clear(); } catch (e) { PAINT = null; } }
   classify(x, z) {
     const w = this.w, k = z * W + x, g = w.ground[k], sb = w.get(x, g - 1, z), M = this.M;
     let t = T.DIRT, gs = 0;
@@ -110,16 +112,16 @@ export class Renderer {
         const sf = bil(sv) + (n1 - 0.5) * 0.3;
         const cr = cor[k] + (n2 - 0.5) * 0.2;
         if (sf > 0.5) { const row = gy >> 2, cell = hash((gx + (row & 1) * 3) >> 3, row, 6); const m = (gy & 3) === 0 || (((gx + (row & 1) * 3) & 7) === 0);
-          col = sf < 0.56 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; if (sf >= 0.56 && h <= 32 && w.region[k] !== RG.VOLCANO) col = rockPix(gx, gy, h < 20 ? 1 : 0); /* v0.13.1: natural stone on grey mountain rock only */ if (cr > 0.6 && hr < 0.3) col = PAL.cor[2];
+          col = sf < 0.56 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; const hb = bil(q => w.ground[q]) + (vnoise(gx / 9, gy / 9, 60) - 0.5) * 1.6, snowy = hb > 32.5; if (sf >= 0.56 && !snowy && w.region[k] !== RG.VOLCANO) col = rockPix(gx, gy, h < 20 ? 1 : 0, true); /* v0.13.2: grey rock tinted toward the painted far map */ /* v0.13.1: natural stone on grey mountain rock only */ if (cr > 0.6 && hr < 0.3) col = PAL.cor[2];
           // v0.17 rock relief: the stone branch used to return one flat grey pattern.
           // Now shade it by height and slope (peaks lighter, steep ground darker, east-facing
           // slope shaded), with dark crack speckle and light boulder highlights, so rocky
           // ground reads as relief instead of a flat texture.
           const hE = w.ground[tget(X + 1, Z)], hW = w.ground[tget(X - 1, Z)], hN = w.ground[tget(X, Z - 1)], slope = Math.abs(hE - hW) + Math.abs(hS - hN);
           let rf = 0.82 + Math.min(0.28, Math.max(0, (h - 16) * 0.02)) - Math.min(0.18, slope * 0.04) + (hE < h ? 0.06 : 0) - (hE > h ? 0.06 : 0);
-          if (h > 32 || w.region[k] === RG.VOLCANO) { if (hr < 0.12) rf *= 0.82; else if (hr > 0.92) rf *= 1.12; }
+          if (w.region[k] === RG.VOLCANO) { if (hr < 0.12) rf *= 0.82; else if (hr > 0.92) rf *= 1.12; }
           col = shadeCol(col, rf);
-          if (h > 32) col = shadeCol(H2('#e8eef2'), 0.9 + hr * 0.2); // v0.18: tallest peak tops are snowy, like the NW peak in the reference
+          if (snowy && w.region[k] !== RG.VOLCANO) { buf[o] = snowPix(gx, gy, hb); continue; } // v0.13.2: smooth wind-drift snow (was flat white + per-tile shading = choppy squares); v0.18: tallest peak tops are snowy, like the NW peak in the reference
           if (w.region[k] === RG.VOLCANO) { const vd = Math.hypot(X - w.volcano.x, Z - w.volcano.z); if (w.lava && w.lava[k]) col = hr < 0.15 ? shadeCol(H2('#ffd040'), 0.95) : hr < 0.3 ? shadeCol(H2('#ff5a00'), 0.9 + hr * 0.3) : hr < 0.55 ? shadeCol(H2('#c22a00'), 0.9) : hr < 0.65 ? shadeCol(H2('#ff8a2a'), 0.85) : shadeCol(H2('#2a2628'), 0.9 + hr * 0.2); else if (vd < 10) col = shadeCol(H2('#ff6a1a'), 0.9 + hr * 0.3); else if (vd < 14) col = hr < 0.4 ? shadeCol(H2('#3a2320'), 0.9) : shadeCol(H2('#ff8a2a'), 0.8); else if (hr < 0.08) col = shadeCol(H2('#ff8a2a'), 0.8); else if (hr > 0.92) col = shadeCol(H2('#4a4448'), 0.95); else col = shadeCol(H2('#2a2628'), 0.9 + hr * 0.2); } // v0.19: lava crater + basalt, not grey stone; v0.21: lava flows (molten orange with cooling dark crust), dark crater rim, ash-grey speckle — not one flat black circle
           buf[o] = col; continue; }
         if (t === T.FARM) { const row = py % 4; col = row === 0 ? PAL.farm[3] : row === 1 ? PAL.farm[2] : PAL.farm[hr < 0.3 ? 0 : 1]; if (px === 0 || px === 15) col = PAL.farm[3]; buf[o] = col; continue; }
@@ -614,7 +616,10 @@ function tentArt() { const c = cv(26, 22), g = c.getContext('2d'); for (let y = 
 
 // v0.13.1 natural rock: world-pixel coords → seamless across tiles/chunks. mode 0 rock, 1 low slope (moss/lichen), 2 snowy.
 const RK = [[52, 54, 62], [92, 96, 108], [118, 122, 134], [140, 145, 156], [170, 175, 186]], SN = [[120, 132, 150], [176, 188, 204], [214, 222, 232], [236, 242, 248], [252, 254, 255]];
-function rockPix(gx, gy, mode) {
+let PAINT = null;
+function paintAt(gx, gy) { if (!PAINT) return null; const u = clamp(gx / (P * 4) - 0.5, 0, 126.999), v = clamp(gy / (P * 4) - 0.5, 0, 126.999), i = u | 0, j = v | 0, fu = u - i, fv = v - j, o = [0, 0, 0];
+  for (let c = 0; c < 3; c++) { const A0 = PAINT[(j * 128 + i) * 4 + c], B0 = PAINT[(j * 128 + i + 1) * 4 + c], C0 = PAINT[((j + 1) * 128 + i) * 4 + c], D0 = PAINT[((j + 1) * 128 + i + 1) * 4 + c]; o[c] = A0 + (B0 - A0) * fu + (C0 - A0) * fv + (A0 - B0 - C0 + D0) * fu * fv; } return o; }
+function rockPix(gx, gy, mode, tint) {
   const wx = gx + (vnoise(gx / 13, gy / 13, 41) - 0.5) * 12, wy = gy + (vnoise(gx / 13, gy / 13, 42) - 0.5) * 12; // domain warp → organic edges
   const big = vnoise(gx / 37, gy / 37, 43) > 0.55, S = big ? 22 : 13, cx = Math.floor(wx / S), cy = Math.floor(wy / S);
   let f1 = 1e9, f2 = 1e9, id = 0, dx1 = 0, dy1 = 0;
@@ -630,5 +635,20 @@ function rockPix(gx, gy, mode) {
   let r0 = c[0], g0 = c[1], b0 = c[2];
   if (mode === 1 && e > 1.4 && vnoise(gx / 6, gy / 6, 52) > 0.62 && dy1 > -1) { const m = hr < 0.5 ? [88, 112, 58] : [110, 128, 70]; r0 = (r0 + m[0] * 2) / 3 | 0; g0 = (g0 + m[1] * 2) / 3 | 0; b0 = (b0 + m[2] * 2) / 3 | 0; } // moss on lower slopes
   else if (mode !== 2 && hr < 0.003 && e > 2) { r0 = 168; g0 = 160; b0 = 96; } // lichen fleck
+  if (tint) { const pc = paintAt(gx, gy); if (pc) { const L = (r0 * 0.3 + g0 * 0.59 + b0 * 0.11) / 128, pl = pc[0] * 0.3 + pc[1] * 0.59 + pc[2] * 0.11 || 1, sc = clamp(115 / pl, 0.7, 1.5); // keep stone contrast, take painting hue + a bit of its brightness
+      r0 = clamp(r0 * 0.3 + pc[0] * sc * L * 0.7, 0, 255) | 0; g0 = clamp(g0 * 0.3 + pc[1] * sc * L * 0.7, 0, 255) | 0; b0 = clamp(b0 * 0.3 + pc[2] * sc * L * 0.7, 0, 255) | 0; } }
   return rgb(r0, g0, b0);
+}
+// v0.13.2 snow: wind-sculpted drifts from world coords (seamless), soft blue-grey shadows, sparkle, rocks poking out near the snow line
+function snowPix(gx, gy, hb) {
+  const wx = gx + (vnoise(gx / 23, gy / 23, 61) - 0.5) * 30, wy = gy + (vnoise(gx / 23, gy / 23, 62) - 0.5) * 18;
+  const f = q => Math.sin((q[0] * 0.18 + q[1] * 0.42) * 0.5 + vnoise(q[0] / 14, q[1] / 14, 63) * 4) * 0.5 + vnoise(q[0] / 7, q[1] / 7, 64) * 0.35 + vnoise(q[0] / 40, q[1] / 40, 65) * 0.6;
+  const e0 = f([wx, wy]), ex = f([wx + 1.5, wy]) - e0, ey = f([wx, wy + 1.5]) - e0;
+  let l = 0.78 + (-ex * 0.6 - ey * 1.0) * 2.2 + (vnoise(gx / 3, gy / 3, 66) - 0.5) * 0.05; // light from upper-left on the drift surface
+  const edge = hb - 32.5;
+  if (edge < 1.2 && vnoise(gx / 5, gy / 5, 67) > 0.66 - (1.2 - edge) * 0.12) return rockPix(gx, gy, 0, true);
+  l = clamp(l, 0.35, 1.05); const hr = hash(gx, gy, 68);
+  if (hr > 0.996 && l > 0.8) return rgb(255, 255, 255);
+  const sh = 1 - l; // shadows go blue-grey
+  return rgb(clamp(238 * l + 40 * sh, 0, 255) | 0, clamp(244 * l + 52 * sh, 0, 255) | 0, clamp(250 * l + 78 * sh + 10, 0, 255) | 0);
 }
