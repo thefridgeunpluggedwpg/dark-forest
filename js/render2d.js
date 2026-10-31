@@ -110,14 +110,14 @@ export class Renderer {
         const sf = bil(sv) + (n1 - 0.5) * 0.3;
         const cr = cor[k] + (n2 - 0.5) * 0.2;
         if (sf > 0.5) { const row = gy >> 2, cell = hash((gx + (row & 1) * 3) >> 3, row, 6); const m = (gy & 3) === 0 || (((gx + (row & 1) * 3) & 7) === 0);
-          col = sf < 0.56 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; if (cr > 0.6 && hr < 0.3) col = PAL.cor[2];
+          col = sf < 0.56 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; if (sf >= 0.56 && h <= 32 && w.region[k] !== RG.VOLCANO) col = rockPix(gx, gy, h < 20 ? 1 : 0); /* v0.13.1: natural stone on grey mountain rock only */ if (cr > 0.6 && hr < 0.3) col = PAL.cor[2];
           // v0.17 rock relief: the stone branch used to return one flat grey pattern.
           // Now shade it by height and slope (peaks lighter, steep ground darker, east-facing
           // slope shaded), with dark crack speckle and light boulder highlights, so rocky
           // ground reads as relief instead of a flat texture.
           const hE = w.ground[tget(X + 1, Z)], hW = w.ground[tget(X - 1, Z)], hN = w.ground[tget(X, Z - 1)], slope = Math.abs(hE - hW) + Math.abs(hS - hN);
           let rf = 0.82 + Math.min(0.28, Math.max(0, (h - 16) * 0.02)) - Math.min(0.18, slope * 0.04) + (hE < h ? 0.06 : 0) - (hE > h ? 0.06 : 0);
-          if (hr < 0.12) rf *= 0.82; else if (hr > 0.92) rf *= 1.12;
+          if (h > 32 || w.region[k] === RG.VOLCANO) { if (hr < 0.12) rf *= 0.82; else if (hr > 0.92) rf *= 1.12; }
           col = shadeCol(col, rf);
           if (h > 32) col = shadeCol(H2('#e8eef2'), 0.9 + hr * 0.2); // v0.18: tallest peak tops are snowy, like the NW peak in the reference
           if (w.region[k] === RG.VOLCANO) { const vd = Math.hypot(X - w.volcano.x, Z - w.volcano.z); if (w.lava && w.lava[k]) col = hr < 0.15 ? shadeCol(H2('#ffd040'), 0.95) : hr < 0.3 ? shadeCol(H2('#ff5a00'), 0.9 + hr * 0.3) : hr < 0.55 ? shadeCol(H2('#c22a00'), 0.9) : hr < 0.65 ? shadeCol(H2('#ff8a2a'), 0.85) : shadeCol(H2('#2a2628'), 0.9 + hr * 0.2); else if (vd < 10) col = shadeCol(H2('#ff6a1a'), 0.9 + hr * 0.3); else if (vd < 14) col = hr < 0.4 ? shadeCol(H2('#3a2320'), 0.9) : shadeCol(H2('#ff8a2a'), 0.8); else if (hr < 0.08) col = shadeCol(H2('#ff8a2a'), 0.8); else if (hr > 0.92) col = shadeCol(H2('#4a4448'), 0.95); else col = shadeCol(H2('#2a2628'), 0.9 + hr * 0.2); } // v0.19: lava crater + basalt, not grey stone; v0.21: lava flows (molten orange with cooling dark crust), dark crater rim, ash-grey speckle — not one flat black circle
@@ -354,7 +354,8 @@ export class Renderer {
     // ---------- fog ----------
     const reg = w.region[clamp(cam.tz | 0, 0, D - 1) * W + clamp(cam.tx | 0, 0, W - 1)], mansD = Math.hypot(cam.tx - M.cx, cam.tz - M.cz);
     const fogA = clamp(0.05 + night * 0.22 + (sim.tod > 0.18 && sim.tod < 0.3 ? 0.25 : 0) + (reg === RG.MARSH ? 0.3 : 0) + (mansD < 50 ? 0.2 : 0), 0, 0.6);
-    if (fogA > 0.02) { ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = fogA; const pat = ctx.createPattern(this.fogTex, 'repeat'); pat.setTransform(new DOMMatrix().scaleSelf(14, 14).translateSelf((t * 0.35) % 96, (t * 0.12) % 96)); ctx.fillStyle = pat; ctx.fillRect(ax0, az0, aw, ah);
+    const zf = clamp((s / dpr - 6) / 10, 0, 1); // v0.13.1: fog/mist are close-up effects; zoomed far out the 14x fog pattern shrank into white cloud spots all over the map
+    if (fogA * zf > 0.02) { ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = fogA * zf; const pat = ctx.createPattern(this.fogTex, 'repeat'); pat.setTransform(new DOMMatrix().scaleSelf(14, 14).translateSelf((t * 0.35) % 96, (t * 0.12) % 96)); ctx.fillStyle = pat; ctx.fillRect(ax0, az0, aw, ah);
       if (mansD < 70) { ctx.globalAlpha = fogA * 0.8; ctx.globalCompositeOperation = 'source-over'; const gr = ctx.createRadialGradient(M.cx * P, M.cz * P, 0, M.cx * P, M.cz * P, 46 * P); gr.addColorStop(0, 'rgba(90,50,130,0.6)'); gr.addColorStop(1, 'rgba(90,50,130,0)'); ctx.fillStyle = gr; ctx.fillRect(ax0, az0, aw, ah); } ctx.restore(); }
     // ---------- light map (multiply) ----------
     this.lighting(ctx, Wd, Hd, ox, oy, s, lights, sim);
@@ -402,7 +403,7 @@ export class Renderer {
       // snowflakes over the snowy peak, even when it is not storming
       if (SX > -100 && SX < Wd + 100 && SY > -100 && SY < Hd + 100) { ctx.fillStyle = 'rgba(255,255,255,0.85)'; for (let i = 0; i < 40; i++) { const fx = SX + ((hash(i, 11, 1) * 80 - 40 + t * 6 * (i % 3 - 1)) % 80) * (s / 16) * dpr, fy = SY + ((hash(i, 12, 1) * 80 - 40 + t * 10 * (0.5 + hash(i, 13, 1) * 0.5)) % 80) * (s / 16) * dpr; ctx.fillRect(fx, fy, 2 * dpr, 2 * dpr); } }
       // swamp mist: drifting translucent patches over marsh tiles in view
-      ctx.fillStyle = 'rgba(220,230,220,0.08)'; for (let i = 0; i < 6; i++) { const mx = (t * 8 * (i % 2 ? 1 : -1) + i * 200) % (Wd + 200) - 100, my = Hd * (0.2 + i * 0.13); ctx.beginPath(); ctx.ellipse(mx, my, 120 * dpr, 18 * dpr, 0, 0, 6.283); ctx.fill(); } }
+      if (zf > 0) ctx.fillStyle = `rgba(220,230,220,${0.08 * zf})`; if (zf > 0) for (let i = 0; i < 6; i++) { const mx = (t * 8 * (i % 2 ? 1 : -1) + i * 200) % (Wd + 200) - 100, my = Hd * (0.2 + i * 0.13); ctx.beginPath(); ctx.ellipse(mx, my, 120 * dpr, 18 * dpr, 0, 0, 6.283); ctx.fill(); } }
     // ---------- overlay: selection, labels ----------
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     for (const e of sim.ents) if (e.held && e.alive && e.rx !== undefined) { // v0.12 grab highlight: ground shadow + pulsing glow ring
@@ -610,3 +611,24 @@ function thickArt() { const c = cv(34, 26), g = c.getContext('2d'); const P2 = [
   for (let i = 0; i < 6; i++) { const cx = 7 + i * 4 + hash(i, 1, 5) * 4, cy = 12 + hash(i, 2, 5) * 7, rx = 7, ry = 6; for (let y = 0; y < 26; y++) for (let x = 0; x < 34; x++) { const nx = (x - cx) / rx, ny = (y - cy) / ry, d = nx * nx + ny * ny; if (d > 1 + (hash(x, y, i) - 0.5) * 0.4) continue; g.fillStyle = P2[clamp(Math.floor((-ny * 0.6 - nx * 0.3 + 0.6) * 3 + hash(x, y, 9) * 0.8), 0, 3)]; g.fillRect(x, y, 1, 1); } }
   for (let i = 0; i < 18; i++) { g.fillStyle = i % 3 ? '#9a5ab8' : '#c83a3a'; g.fillRect(3 + hash(i, 3, 5) * 28 | 0, 4 + hash(i, 4, 5) * 18 | 0, 1, 2); } return A.outline(c, '#0e1a0c'); }
 function tentArt() { const c = cv(26, 22), g = c.getContext('2d'); for (let y = 0; y < 16; y++) { const w = Math.round(2 + y * 1.3); g.fillStyle = y % 4 === 0 ? '#8a6a3a' : '#b08a4a'; g.fillRect(13 - w / 2, 4 + y, w, 1); } g.fillStyle = '#2a1a10'; g.fillRect(11, 12, 4, 8); g.fillStyle = '#6b4224'; g.fillRect(12, 1, 2, 4); return A.outline(c); }
+
+// v0.13.1 natural rock: world-pixel coords → seamless across tiles/chunks. mode 0 rock, 1 low slope (moss/lichen), 2 snowy.
+const RK = [[52, 54, 62], [92, 96, 108], [118, 122, 134], [140, 145, 156], [170, 175, 186]], SN = [[120, 132, 150], [176, 188, 204], [214, 222, 232], [236, 242, 248], [252, 254, 255]];
+function rockPix(gx, gy, mode) {
+  const wx = gx + (vnoise(gx / 13, gy / 13, 41) - 0.5) * 12, wy = gy + (vnoise(gx / 13, gy / 13, 42) - 0.5) * 12; // domain warp → organic edges
+  const big = vnoise(gx / 37, gy / 37, 43) > 0.55, S = big ? 22 : 13, cx = Math.floor(wx / S), cy = Math.floor(wy / S);
+  let f1 = 1e9, f2 = 1e9, id = 0, dx1 = 0, dy1 = 0;
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const qx = cx + i, qy = cy + j, px = (qx + 0.15 + hash(qx, qy, 44 + S) * 0.7) * S, py = (qy + 0.15 + hash(qx, qy, 45 + S) * 0.7) * S;
+    const ex = wx - px, ey = (wy - py) * 1.15, d = ex * ex + ey * ey; if (d < f1) { f2 = f1; f1 = d; id = hash(qx, qy, 47 + S); dx1 = ex; dy1 = ey; } else if (d < f2) f2 = d; }
+  const e = Math.sqrt(f2) - Math.sqrt(f1), r = Math.sqrt(f1) / S, hr = hash(gx, gy, 48);
+  let l = 0.55 + (id - 0.5) * 0.22 + (vnoise(gx / 30, gy / 30, 53) - 0.5) * 0.3 - (dx1 + dy1) / S * 0.35 - r * 0.25 + (vnoise(gx / 3, gy / 3, 49) - 0.5) * 0.25; // per-boulder tone + top-left light
+  if (e < 0.6 + vnoise(gx / 5, gy / 5, 50) * 0.9) l = 0.12 + hr * 0.12; // crack between stones
+  else if (e < 2.2) l -= 0.1; // soft shadow edge
+  else if (vnoise(gx / 4, gy / 4, 51 + (id * 9 | 0)) > 0.78 && hr < 0.5) l -= 0.22; // fine fissure inside a slab
+  if (hr > 0.992 && e > 2) l = 0.15; else if (hr > 0.985 && e > 2) l = 0.9; // scree pebbles + glints
+  const P5 = mode === 2 && (dy1 < S * 0.25 || id > 0.4) && e > 1 ? SN : RK, c = P5[clamp(Math.floor(clamp(l, 0, 0.999) * 5), 0, 4)];
+  let r0 = c[0], g0 = c[1], b0 = c[2];
+  if (mode === 1 && e > 1.4 && vnoise(gx / 6, gy / 6, 52) > 0.62 && dy1 > -1) { const m = hr < 0.5 ? [88, 112, 58] : [110, 128, 70]; r0 = (r0 + m[0] * 2) / 3 | 0; g0 = (g0 + m[1] * 2) / 3 | 0; b0 = (b0 + m[2] * 2) / 3 | 0; } // moss on lower slopes
+  else if (mode !== 2 && hr < 0.003 && e > 2) { r0 = 168; g0 = 160; b0 = 96; } // lichen fleck
+  return rgb(r0, g0, b0);
+}

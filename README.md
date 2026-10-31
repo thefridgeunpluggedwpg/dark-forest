@@ -1,5 +1,8 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.1
+- Mountain rock no longer looks like brickwork: zoomed-in rock is now irregular boulders and slabs (warped Voronoi) with organic cracks, soft shading, scree pebbles, moss/lichen on lower slopes; the NW snowy peak uses the same look with snow caps. Seamless across tiles. Cache bumped to dark-forest-v33.
+
 ## v0.13 (preview)
 - Zoomed-in terrain now matches the painted world map: a 512x512 biome grid (`js/biomemask.js`, built by `tools/biomemask.py` from `assets/ref/full_4608.jpg`) decides lake/sea, forest, swamp (murky pools, dead trees), rock mountains, snowy peak, volcano basalt + lava, jungle palms, meadows/villages and the haunted heart. Mountain/volcano heights come from distance inside the painted shapes.
 - New calm music: day = warm pads, kalimba melody, light birdsong; night = soft low pads, slow music-box bells, gentle crickets and wind. Low-pass + generated reverb, smooth equal-power day/night crossfade. Still fully procedural, no files.
