@@ -1,5 +1,8 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.4
+- Mid zoom (between close-up and full map) no longer falls back to the 1-pixel-per-tile overview, which showed villages as a flat tan box of plots on blocky ground. That range now draws the real detailed ground chunks (smoothed when shrunk), crossfading into the painted map as you zoom out, so villages keep their houses, paths and fields. Cache bumped to dark-forest-v36.
+
 ## v0.13.3
 - Zoomed-out zone labels now sit on the painted areas they name: Walk of Shame on the snowy NW peak, Mount Cinderwrath on the volcano, BlackCardU Swamp on the swamp, Jungle, Deep Woods, Meadows, Rocky Highlands / Grumblecrag / Hollowtooth Tors on the three main ranges, Mirrormere / Glimmerpool / Tumblemere on the lakes, and Driftwood Shore / Gullwhistle Coast / Sandy Coast on the west, east and south coasts (the old fixed 'Sandy Coast' labels sat on forest and mountains). Labels that would overlap are skipped. Cache bumped to dark-forest-v35.
 

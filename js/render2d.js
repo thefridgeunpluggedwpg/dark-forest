@@ -260,15 +260,17 @@ export class Renderer {
     for (const [rp, sx, sy] of [[this.ripple, 3.5, 1.2], [this.ripple2, -2.4, 2.1]]) { const pat = ctx.createPattern(rp, 'repeat'); pat.setTransform(new DOMMatrix().translateSelf(Math.round(t * sx * 4) % 64, Math.round(Math.sin(t * 0.7) * 3 + t * sy) % 64)); ctx.fillStyle = pat; ctx.fillRect(ax0, az0, aw, ah); }
     // ground
     const cx0 = clamp(Math.floor(vx0 / CH), 0, NC - 1), cx1 = clamp(Math.floor(vx1 / CH), 0, NC - 1), cz0 = clamp(Math.floor(vz0 / CH), 0, NC - 1), cz1 = clamp(Math.floor(vz1 / CH), 0, NC - 1);
-    const far = cam.scale < 5.5; let built = 0;
-    if (far) { ctx.imageSmoothingEnabled = cam.scale < 2.5; ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P); ctx.imageSmoothingEnabled = false;
+    const far = cam.scale < 5.5, lowres = cam.scale < 3; let built = 0; // v0.13.4: the blocky 1-px-per-tile overview is now only the far (<3) base under the painting; 3-5.5 uses real chunks
+    if (lowres) { ctx.imageSmoothingEnabled = cam.scale < 2.5; ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P); ctx.imageSmoothingEnabled = false;
       // v0.22: far zoom = Kyler's image, crossfading to game terrain as you zoom in. Scale <3: full image. Scale 3-5.5: blend image -> overview. Scale >=5.5: game chunks (close view, handled below). This is why far looks beautiful and close looks like the game, without a hard pop.
       const fullA = cam.scale < 3 ? 1 : cam.scale < 5.5 ? (5.5 - cam.scale) / 2.5 : 0;
       // v0.25 FIX: v0.24 upscaled the far image to 4608 but still cropped source rect 0,0,512,512 — so far view only ever showed the top-left 11% of the image (deep blue sea), stretched over the whole map. Now it draws the full natural size, with smoothing on for the downscale.
       if (fullA > 0 && this.refFull && this.refFull.complete && this.refFull.naturalWidth) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.refFull, 0, 0, this.refFull.naturalWidth, this.refFull.naturalHeight, 0, 0, W * P, D * P); ctx.restore(); } }
-    else { let missing = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) if (!this.chunks.has(cx + ',' + cz)) missing = true;
-      if (missing) ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P);
-      const budget = this.forceBuild ? 1e9 : 2; this.forceBuild = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) { const had = this.chunks.has(cx + ',' + cz), c = this.chunk(cx, cz, built < budget); if (c && !had) built++; if (c) ctx.drawImage(c, cx * CP, cz * CP); } }
+    else { const fullA = cam.scale < 5.5 ? (5.5 - cam.scale) / 2.5 : 0, pOK = this.refFull && this.refFull.complete && this.refFull.naturalWidth; let missing = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) if (!this.chunks.has(cx + ',' + cz)) missing = true;
+      if (missing) { if (pOK) { ctx.imageSmoothingEnabled = true; ctx.drawImage(this.refFull, 0, 0, this.refFull.naturalWidth, this.refFull.naturalHeight, 0, 0, W * P, D * P); ctx.imageSmoothingEnabled = false; } else ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P); }
+      ctx.imageSmoothingEnabled = k < 1; // v0.13.4: chunks shrunk below 1:1 are smoothed instead of nearest-neighbour stepping
+      const budget = this.forceBuild ? 1e9 : 2; this.forceBuild = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) { const had = this.chunks.has(cx + ',' + cz), c = this.chunk(cx, cz, built < budget); if (c && !had) built++; if (c) ctx.drawImage(c, cx * CP, cz * CP); } ctx.imageSmoothingEnabled = false;
+      if (fullA > 0 && pOK) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.refFull, 0, 0, this.refFull.naturalWidth, this.refFull.naturalHeight, 0, 0, W * P, D * P); ctx.restore(); } }
     // v0.24 landmarks: photo pictures far/mid only, fading out as you zoom in, so close zoom is clean tile ground, not a stretched photo. Full at scale <=5.5, fade 5.5-12, gone above 12.
     { const landA = cam.scale <= 5.5 ? 1 : cam.scale < 12 ? (12 - cam.scale) / 6.5 : 0;
       const refDraw = (im, cx, cz, wTiles) => { if (!im || !im.complete || !im.naturalWidth || landA <= 0) return; const wPx = wTiles * P, hPx = wPx * im.height / im.width; ctx.save(); ctx.globalAlpha = landA; ctx.imageSmoothingEnabled = false; ctx.drawImage(im, Math.round(cx * P - wPx / 2), Math.round(cz * P - hPx / 2), Math.round(wPx), Math.round(hPx)); ctx.restore(); };
