@@ -1,5 +1,8 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.3
+- Zoomed-out zone labels now sit on the painted areas they name: Walk of Shame on the snowy NW peak, Mount Cinderwrath on the volcano, BlackCardU Swamp on the swamp, Jungle, Deep Woods, Meadows, Rocky Highlands / Grumblecrag / Hollowtooth Tors on the three main ranges, Mirrormere / Glimmerpool / Tumblemere on the lakes, and Driftwood Shore / Gullwhistle Coast / Sandy Coast on the west, east and south coasts (the old fixed 'Sandy Coast' labels sat on forest and mountains). Labels that would overlap are skipped. Cache bumped to dark-forest-v35.
+
 ## v0.13.2
 - Snowy NW peak close-up redrawn: smooth wind-sculpted drifts with soft blue-grey shadows, sparkle, rocks poking through at the snow line; snow edge follows smoothed height, so no square tile blocks. Seamless, built once per chunk.
 - Close-up grey mountain rock is tinted toward the painted far map's local colour (low-pass of full_4608.jpg), e.g. ash-brown/charcoal near the volcano. Boulder/slab shapes unchanged. Cache bumped to dark-forest-v34.

@@ -419,12 +419,27 @@ export class Renderer {
     if (this.showLabels) this.regionLabels(ctx, ox, oy, s, dpr, cam);
   }
   label(ctx, text, x, y, size, col) { ctx.font = `600 ${size}px "Pixelify Sans", monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = Math.max(3, size / 4); ctx.strokeStyle = '#1a100a'; ctx.strokeText(text, x, y); ctx.fillStyle = col; ctx.fillText(text, x, y); }
+  zoneLabels() { const w = this.w, M = this.M, L = [];
+    const land = (x, z) => w.inb(x, z) && !w.water[z * W + x] && w.region[z * W + x] !== RG.SEA;
+    L.push([M.cx, M.cz - 14, REGION_NAMES[RG.HAUNT]], [M.cx, M.cz - 9, '83 Kingsway', 1]);
+    L.push([w.volcano.x, w.volcano.z + 34, 'Mount Cinderwrath']); L.push([w.snow.x, w.snow.z + 10, 'Walk of Shame']);
+    L.push([w.jungle.x, w.jungle.z, REGION_NAMES[RG.JUNGLE]]); L.push([145, 306, REGION_NAMES[RG.MARSH]]);
+    L.push([276, 128, 'Rocky Highlands'], [407, 280, 'Grumblecrag'], [265, 420, 'Hollowtooth Tors'], [444, 226, 'Deep Woods'], [330, 262, 'Meadows'], [375, 246, 'Tumblemere']);
+    // inland lakes: the two biggest water bodies not connected to the sea
+    { const seen = new Uint8Array(W * D), lakes = []; for (let s0 = 0; s0 < W * D; s0++) { if (seen[s0] || !w.water[s0] || w.region[s0] === RG.SEA) continue; let st = [s0], n = 0, sx = 0, sz = 0, sea = false; seen[s0] = 1;
+        while (st.length) { const k = st.pop(), x = k % W, z = k / W | 0; n++; sx += x; sz += z; for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const X = x + dx, Z = z + dz; if (X < 0 || Z < 0 || X >= W || Z >= D) { sea = true; continue; } const q = Z * W + X; if (w.region[q] === RG.SEA) sea = true; if (!seen[q] && w.water[q] && w.region[q] !== RG.SEA) { seen[q] = 1; st.push(q); } } }
+        if (!sea && n > 8 && Math.hypot(sx / n - M.cx, sz / n - M.cz) > 30) lakes.push([n, sx / n, sz / n]); }
+      lakes.sort((a, b) => b[0] - a[0]); ['Mirrormere', 'Glimmerpool'].forEach((nm, i) => { if (lakes[i]) L.push([lakes[i][1], lakes[i][2], nm]); }); }
+    // coasts: walk in from the map edge along a ray to the first land, then step a little inland
+    for (const [ang, nm] of [[Math.PI, 'Driftwood Shore'], [0, 'Gullwhistle Coast'], [Math.PI / 2, REGION_NAMES[RG.COAST]]]) { const dx = Math.cos(ang), dz = Math.sin(ang); for (let r = 250; r > 20; r--) { const x = Math.round(256 + dx * r), z = Math.round(256 + dz * r); if (land(x, z)) { L.push([256 + dx * (r - 12), 256 + dz * (r - 12), nm]); break; } } }
+    return L; }
   regionLabels(ctx, ox, oy, s, dpr, cam) {
     if (cam.scale > 26) return; const w = this.w, size = clamp(s * 2.4, 13 * dpr, 30 * dpr), seen = new Set();
-    const items = w.regionSeeds.map(r => [r.x, r.z, REGION_NAMES[w.region[clamp(Math.round(r.z), 0, D - 1) * W + clamp(Math.round(r.x), 0, W - 1)]]]); items.push([this.M.cx, this.M.cz - 14, REGION_NAMES[RG.HAUNT]]); if (cam.scale > 5) items.push([this.M.cx, this.M.cz - 9, '83 Kingsway']); if (w.volcano) items.push([w.volcano.x, w.volcano.z - 8, REGION_NAMES[RG.VOLCANO]]); if (w.jungle) items.push([w.jungle.x, w.jungle.z, REGION_NAMES[RG.JUNGLE]]); if (w.snow) items.push([w.snow.x, w.snow.z - 8, 'Walk of Shame']);
-    const cs = [[0.5, 0.12], [0.88, 0.5], [0.5, 0.88], [0.12, 0.5]]; for (const [a, b] of cs) items.push([W * a, D * b, REGION_NAMES[RG.COAST]]);
+    // v0.13.3: labels placed on the painted areas they name (checked against the biome grid + full_4608.jpg), computed once per world
+    if (this._labW !== w) { this._labW = w; this._labs = this.zoneLabels(); }
+    const items = this._labs.filter(l => !l[3] || cam.scale > 5);
     ctx.font = `${size}px "Jacquard 12", "Pixelify Sans", serif`;
-    for (const [x, z, n] of items) { if (n === REGION_NAMES[RG.SEA]) continue; const X = ox + x * s, Y = oy + z * s; if (X < -200 || Y < -50 || X > ctx.canvas.width + 200 || Y > ctx.canvas.height + 50) continue; if (seen.has(n + Math.round(x / 120))) continue; seen.add(n + Math.round(x / 120));
+    const boxes = []; for (const [x, z, n] of items) { if (n === REGION_NAMES[RG.SEA]) continue; const X = ox + x * s, Y = oy + z * s; if (X < -200 || Y < -50 || X > ctx.canvas.width + 200 || Y > ctx.canvas.height + 50) continue; { const tw = ctx.measureText(n).width * 0.5 + 6 * dpr, th = size * 0.6; if (boxes.some(q => Math.abs(q[0] - X) < q[2] + tw && Math.abs(q[1] - Y) < q[3] + th)) continue; boxes.push([X, Y, tw, th]); }
       const txt = n.replace(/^the /, '').replace(/^\w/, c => c.toUpperCase()); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = size / 5; ctx.strokeStyle = 'rgba(26,16,10,.85)'; ctx.strokeText(txt, X, Y); ctx.fillStyle = n === '83 Kingsway' ? '#ffd27a' : n === REGION_NAMES[RG.HAUNT] ? '#e6b8ff' : '#fff0c8'; ctx.fillText(txt, X, Y); }
   }
 
