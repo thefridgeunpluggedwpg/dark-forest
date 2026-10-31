@@ -10,7 +10,7 @@ const VILLAGE_POOL = ['Mossbrook', 'Oakhollow', 'Fernreach', 'Ashgrove', 'Thornw
 const TRIBE_NAMES = ['Mossbrook', 'Oakhollow', 'Fernreach', 'Ashgrove', 'Thornwick', 'Emberfall', 'Briarden', 'Duskmere', 'Willowend', 'Cinderpine'];
 const TRIBE_COLORS = [0x6fc3ff, 0xffb04a, 0x9be26a, 0xe27adf, 0xfff06a, 0xff6a6a, 0x6affd8, 0xc0a0ff, 0xffffff, 0xa0ff40];
 const VAMP_NAMES = ['Stefan', 'Vlad', 'Carmilla', 'Lucian', 'Mircea', 'Elisabeta', 'Dracul', 'Ilona', 'Radu', 'Mina', 'Bathory', 'Anca'];
-export const VAMP_CAP = (globalThis.DF_VCAP || 20), MANSION_CAP = 12; /* v0.12.2: 12 rooms at 83 Kingsway, overflow sleeps in hideouts */
+export const VAMP_CAP = (globalThis.DF_VCAP || 36), MANSION_CAP = 12; /* v0.13: bigger coven (was 20); 12 rooms at 83 Kingsway, overflow sleeps in hideouts */
 export const BAT_SPEED = 2.6;
 export const TRADE_SPEED = 0.8;
 // v0.11.1 a/an for every feed line: 'a Emberfall door' → 'an Emberfall door', 'A Oakhollow guard' → 'An Oakhollow guard'.
@@ -18,7 +18,7 @@ export const TRADE_SPEED = 0.8;
 const A_EXC = /^(u[bcdfgklmnprstvz][aeiou]|uni|use|usu|ute|uti|eu|ewe|one|once|ufo)/i;
 export function fixArticles(t) { return t.replace(/\b([Aa]) ([A-Za-z][\w'-]*)/g, (m, a, w) => /^[aeiou]/i.test(w) && !A_EXC.test(w) ? `${a}n ${w}` : m); }
 export const REP_APPOINT = 5, REP_DUTY = 2, REP_WIN = 12, REP_LOW = -15, DRAFT_DAYS = 4;
-export const LOW_FLOOR = 5, GUARD_WIN = 0.4, SWARM_CAP = 4, RAID_SPEED = 2.6;
+export const LOW_FLOOR = 5, GUARD_WIN = 0.5, SWARM_CAP = 4, RAID_SPEED = 2.9; /* v0.13: guards win their roll half the time (was 0.4); raid bats a touch faster */
 export const SHADE_R = 12; // v0.9: the mansion's shadow — vampires are sun-immune within this radius of 83 Kingsway's centre
 const HUT_SLOTS = 8, RING_R = 11;
 const dist = (a, b, c, d) => Math.hypot(a - c, b - d);
@@ -34,10 +34,13 @@ export class Sim {
     this.usedNames = new Set(); this.vampIdx = 0; this.onLog = null; this.huntLogged = new Set();
     this.astarBuf = { g: new Float32Array(W * D), came: new Int32Array(W * D), stamp: new Uint32Array(W * D), s: 0 };
     this.genHideouts();
-    for (let t = 0; t < 4; t++) {
-      const site = this.findSite(null); if (!site) continue;
+    // v0.23 settlement alignment (Kyler, 2026-10-30): villages are aligned to the settlements in his reference island (26875_7_647f.jpg) as best as the game's terrain allows. Image villages, converted from 1408px to 512 tiles (divide by 2.75): A east (985,560)->(358,204) NE, B south-east (945,850)->(344,309) SE, C south-central (525,850)->(191,309) SW. The other 5 are quadrant villages in the same pattern as before, so the total is still 8, 2 per quadrant. Nearest suitable site wins (same checks as findSite: meadow/woods/lake, no water, ground variance <=3, >=50 from other villages, >=42 from mansion, >=20 from hideouts). Where the image spot itself is not suitable, the nearest suitable spot is used: B moves to (319,333) because a game peak sits at (361,308), C moves to (242,296) because the game swamp covers (191,309) — both are the closest suitable sites, not a random quadrant pick.
+    const targets = [[358, 204, 'NE'], [344, 309, 'SE'], [191, 309, 'SW'], [140, 110, 'NW'], [430, 180, 'NE'], [430, 380, 'SE'], [230, 430, 'SW'], [180, 70, 'NW']];
+    for (let t = 0; t < 8; t++) {
+      const [tx, tz, quad] = targets[t];
+      const site = this.findSiteNear(tx, tz, quad) || this.findSite(null, 999, false, quad); if (!site) continue;
       const tr = this.foundTribe(site.x, site.z, null);
-      for (let i = 0; i < 7; i++) { const e = this.spawnThronglet(site.x + (this.r() - .5) * 6, site.z + (this.r() - .5) * 6); this.join(e, tr); }
+      for (let i = 0; i < 8; i++) { const e = this.spawnThronglet(site.x + (this.r() - .5) * 6, site.z + (this.r() - .5) * 6); this.join(e, tr); }
       this.log(`The ${tr.name} tribe gathered around a fire in the glade.`, 'tribe');
     }
     this.initPenguins();
@@ -50,7 +53,7 @@ export class Sim {
   threat() { return Math.min(1, Math.max(0, (this.day - 1) / 24)); }
   // v0.10 coven appetite: a nightly kill budget that shrinks as the Thronglets thin out, so the forest never empties
   nightKey() { return this.tod > 0.5 ? this.day : this.day - 1; }
-  killBudget() { const n = this.thronglets().length; const f = this.day <= 4 ? 28 : this.day <= 10 ? 41 : 39; return n < f ? 0 : Math.max(1, Math.min(10, Math.round((n - f + 2) / 2.5))); /* v0.11.1: floor 28 days 1-4, 41 days 5-10 (slow-growth seeds), then 39 so pop holds ~40+ */ }
+  killBudget() { const n = this.thronglets().length; const f = this.day <= 4 ? 40 : this.day <= 10 ? 55 : 52; return n < f ? 0 : Math.max(1, Math.min(10, Math.round((n - f + 2) / 2.5))); /* v0.13: floors raised for the bigger starting population (8 villages); pop holds ~50+ */ }
   sated() { return (this.nightKills && this.nightKills.k === this.nightKey() ? this.nightKills.n : 0) >= this.killBudget(); }
   isGuard(v) { if (!this.guardIds || this.tick - this.guardAt >= 20) { this.guardAt = this.tick; const vs = this.vamps().filter(o => o.name !== 'Stefan' && !o.batHome && !o.hideout).sort((a, b) => a.id - b.id), n = vs.length + 1, g = n >= 6 ? 3 : n >= 3 ? 2 : n >= 2 ? 1 : 0; this.guardIds = vs.slice(0, g).map(o => o.id); } return this.guardIds.includes(v.id); }
   // ===== v0.11 village guards: 1 (small village) or 2 (8+ members) Thronglets stand guard. The ONLY Thronglets who ever resist.
@@ -65,7 +68,7 @@ export class Sim {
       for (const e of go) { if (e.inHut) this.leaveHut(e); e.home = null; e.act = null; this.join(e, T); this.stats.migrants = (this.stats.migrants || 0) + 1; } this.assignHomes(big); this.assignHomes(T);
       this.log(`${go.map(e => e.name).join(' and ')} left ${big.name} at first light to help rebuild ${T.name}.`, 'tribe'); } }
   guardPlan() { this.lowPlan(); for (const tr of this.tribes) { if (!tr.alive || tr.outcasts) { if (tr.guards) tr.guards.length = 0; continue; } tr.guards = (tr.guards || []).filter(id => { const g = this.byId.get(id); const ok = g && g.alive && !g.exile && g.tribe === tr.id && !g.bcu && !(g.drafted && (this.rep(g) >= 0 || this.day - g.drafted > DRAFT_DAYS)); if (!ok && g) { if (g.drafted && g.alive && g.tribe === tr.id) { this.log(`${g.name} has earned back the respect of ${tr.name} and stood down from guard duty.`, 'tribe'); g.noDraft = this.day + 2; } g.drafted = 0; g.guardOf = null; } return ok; });
-      const want = tr.members.size >= 8 ? 2 : tr.members.size >= 3 ? 1 : 0; while (tr.guards.length > want) { const g = this.byId.get(tr.guards.pop()); if (g) g.guardOf = null; }
+      const want = tr.members.size >= 10 ? 3 : tr.members.size >= 6 ? 2 : tr.members.size >= 3 ? 1 : 0; // v0.13: bigger villages field more guards for the night watch while (tr.guards.length > want) { const g = this.byId.get(tr.guards.pop()); if (g) g.guardOf = null; }
       const lowc = want ? [...tr.members].map(id => this.byId.get(id)).filter(o => o && o.alive && o.kind === 't' && !o.exile && !o.banishing && !o.bcu && !o.trade && o.guardOf == null && o.hp > 50 && !(o.noDraft > this.day) && this.rep(o) < REP_LOW).sort((a, b) => this.rep(a) - this.rep(b))[0] : null;
       if (lowc && tr.guards.length >= want) { const k = tr.guards.findIndex(id => { const g = this.byId.get(id); return g && !g.drafted; }); if (k >= 0) { const g = this.byId.get(tr.guards[k]); g.guardOf = null; tr.guards.splice(k, 1); } }
       if (lowc && tr.guards.length < want) { lowc.guardOf = tr.id; lowc.drafted = this.day; tr.guards.push(lowc.id); this.gstats.appointed++; this.gstats.drafted = (this.gstats.drafted || 0) + 1; this.honour(lowc, REP_APPOINT, `${lowc.name} is put on guard duty to earn back respect in ${tr.name}.`); }
@@ -77,14 +80,28 @@ export class Sim {
     if (e.inHut || e.hidden || e.hunger > 60 || e.hp < 40) return false; // shelter/eat like everyone else
     const night = this.isNight(); if (night && !this.vampNight()) return false;
     // intercept: a vampire chasing one of our villagers near the village
-    if (this.vampNight() || (this.tick + e.id) % 2 === 0) { let tv = null, bd = 22; for (const v of this.ents) { if (v.kind !== 'v' || !v.alive || v.name === 'Stefan' || v.batHome || !v.assign || v.assign.type !== 'hunt') continue; const p = v.assign.e; if (!p || !p.alive || p.tribe !== tr.id || p === e || dist(p.x, p.z, tr.cx, tr.cz) > 26) continue; const d = dist(e.x, e.z, v.x, v.z); if (d < bd) { bd = d; tv = v; } }
+    if (this.vampNight() || (this.tick + e.id) % 2 === 0) { let tv = null, bd = 30; for (const v of this.ents) { if (v.kind !== 'v' || !v.alive || v.name === 'Stefan' || v.batHome || !v.assign || v.assign.type !== 'hunt') continue; const p = v.assign.e; if (!p || !p.alive || p.tribe !== tr.id || p === e || dist(p.x, p.z, tr.cx, tr.cz) > 30) continue; const d = dist(e.x, e.z, v.x, v.z); if (d < bd) { bd = d; tv = v; } }
       if (tv) { e.state = 'guarding ' + tr.name; e.act = null; e.fear = 0; if (!e.intercepting || e.intercepting !== tv.id) { e.intercepting = tv.id; this.gstats.interceptions++; e.rallied = this.tick; this.rally(e, tv); if (!this.huntLogged.has('ib' + e.id + ':' + this.nightKey())) this.huntLogged.add('ib' + e.id + ':' + this.nightKey()), this.log(`${/^[AEIOU]/.test(tr.name) ? 'An' : 'A'} ${tr.name} guard, ${e.name}, ran to block ${tv.name}.`, 'tribe'); }
-        if (dist(e.x, e.z, tv.x, tv.z) < 1.6) { if (e.rallied && this.tick - e.rallied < 30 && this.ents.some(o => o.kind === 'v' && o !== tv && o.alive && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) > 2.5)) { e.state = 'holding off ' + tv.name; return true; } e.rallied = 0; const sw = this.ents.filter(o => o.kind === 'v' && o.alive && o !== tv && !o.batHome && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) < 7).slice(0, SWARM_CAP - 1); this.resolveGuard(e, [tv, ...sw]); return true; }
+        if (dist(e.x, e.z, tv.x, tv.z) < 1.6) { if (e.rallied && this.tick - e.rallied < 30 && this.ents.some(o => o.kind === 'v' && o !== tv && o.alive && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) > 2.5)) { e.state = 'holding off ' + tv.name; return true; } e.rallied = 0; const sw = this.ents.filter(o => o.kind === 'v' && o.alive && o !== tv && !o.batHome && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) < 7).slice(0, SWARM_CAP - 1); const allies = this.ents.filter(o => o.kind === 't' && o !== e && o.alive && o.guardOf === e.guardOf && dist(o.x, o.z, e.x, e.z) < 6).length; this.resolveGuard(e, [tv, ...sw], allies); return true; }
         this.moveTo(e, tv.x, tv.z, 0.42, 1.2); return true; } }
-    e.intercepting = null; if (night) return false;
-    // stand guard by the village square by day and at dusk
-    if (this.tod > 0.62 || (this.tick + e.id * 37) % 600 < 200) { /* v0.12.1: day guard duty in blocks, not every 3rd tick (that tug-of-war with chores froze guards in place) */ const a = (e.id * 2.4) % 6.28, gx = tr.cx + Math.cos(a) * 3.5, gz = tr.cz + Math.sin(a) * 3.5; if (dist(e.x, e.z, gx, gz) > 1.5) { this.moveTo(e, gx, gz, 0.3, 1.2); e.state = 'standing guard at ' + tr.name; return true; } e.state = 'standing guard at ' + tr.name; return this.tod > 0.6; }
+    e.intercepting = null;
+    if (night) return this.patrolStep(e, tr, 0.3, 'patrolling '); // v0.16: waypoint loop through the whole settlement, not one creeping ring point
+    // patrol the settlement by day too (in duty blocks, and all through dusk), instead of standing at one fixed square spot
+    if (this.tod > 0.62 || (this.tick + e.id * 37) % 600 < 200) return this.patrolStep(e, tr, 0.3, 'patrolling ');
     return false; }
+  // v0.16 guard patrol route: village centre, then 8 waypoints on a radius-9 ring
+  // (inside the RING_R=11 wall, covering the hut ring at 6 and the farm ring at 7.5-9),
+  // then back through the centre. Each guard starts at a different waypoint so they
+  // spread out instead of bunching, and a waypoint that can't be reached in 300
+  // ticks (30s) is skipped rather than freezing the guard in place.
+  patrolStep(e, tr, speed, label) {
+    if (!e.patrol || e.patrol.tr !== tr.id) { const pts = [[tr.cx, tr.cz]]; for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 + tr.id * 0.3; let px = tr.cx, pz = tr.cz; for (const r of [9, 7.5, 6]) { const x = Math.round(tr.cx + Math.cos(a) * r), z = Math.round(tr.cz + Math.sin(a) * r), kk = z * W + x; if (!this.w.water[kk] && this.w.stack[kk] < 4) { px = x; pz = z; break; } } pts.push([px, pz]); } e.patrol = { tr: tr.id, pts, i: e.id % pts.length, at: this.tick }; }
+    const p = e.patrol.pts[e.patrol.i];
+    if (dist(e.x, e.z, p[0], p[1]) < 2 || this.tick - e.patrol.at > 300) { e.patrol.i = (e.patrol.i + 1) % e.patrol.pts.length; e.patrol.at = this.tick; }
+    const q = e.patrol.pts[e.patrol.i];
+    e.state = label + tr.name; e.fear = 0;
+    if (dist(e.x, e.z, q[0], q[1]) > 1.5) this.moveTo(e, q[0], q[1], speed, 1.2);
+    return true; }
   // ===== v0.11 clockwise night-raid rotation: villages sorted by bearing around 83 Kingsway; each night the main pack raids the next one
   shelterDist(v) { const D = this.doorPt(); let d = dist(v.x, v.z, D.x, D.z); for (const h of this.hideouts) if (h.occ.size < h.cap || h.occ.has(v.id)) d = Math.min(d, dist(v.x, v.z, h.x, h.z)); return d; }
   // make sure a raid site has a couple of forest hideouts within reach (adds them in uncovered regions)
@@ -96,7 +113,7 @@ export class Sim {
   raidPick() { const nk = this.nightKey(); if (this.raid && this.raid.nk === nk) return this.raid.t; const ord = this.raidOrder(); if (!ord.length) return null; const m = this.w.mansion;
     const prev = this.raid && this.raid.t, pb = prev ? (Math.atan2(prev.cz - m.z, prev.cx - m.x) + 6.2832) % 6.2832 : -1; let t = ord.find(o => ((Math.atan2(o.cz - m.z, o.cx - m.x) + 6.2832) % 6.2832) > pb + 1e-9 && o !== prev) || ord[0];
     this.raid = { nk, t, arrived: false }; this.ensureHideouts(t); (this.raidLog || (this.raidLog = [])).push({ day: this.day, nk, id: t.id, name: t.name }); this.log(`The vampires head for ${t.name} tonight.`, 'vamp'); return t; }
-  isRaider(v) { const vs = this.vamps(); return vs.length <= 2 || v.name === 'Stefan' || v.id % 6 !== 5; } /* v0.12.2: 1 in 6 stays behind (was 1 in 4) */ // ~1 in 4 stays behind as a lone opportunist
+  isRaider(v) { const vs = this.vamps(); return vs.length <= 2 || v.name === 'Stefan' || v.id % 8 !== 7; } /* v0.13: 1 in 8 stays behind — nearly the whole coven raids */
   raidFlight(v) { if (!this.vampNight() || v.injuredNight === this.nightKey() || !this.isRaider(v)) return false; const t = this.raidPick(); if (!t || !t.alive) return false; const nk = this.nightKey();
     if (v.raidNk === nk) return false; // already at the raid site tonight
     if (v.assign && v.assign.type === 'hunt' && v.assign.e && v.assign.e.alive && dist(v.x, v.z, v.assign.e.x, v.assign.e.z) < 10) return false; // busy with prey right here
@@ -111,9 +128,10 @@ export class Sim {
   rally(g, v) { const nk = this.nightKey(); const pals = this.ents.filter(o => o.kind === 'v' && o.alive && o !== v && o.name !== 'Stefan' && !o.batHome && !o.inMansion && !o.hideout && o.state !== 'retreat' && o.injuredNight !== nk && o.hp >= 45 && dist(o.x, o.z, g.x, g.z) < 60).sort((a, b) => dist(a.x, a.z, g.x, g.z) - dist(b.x, b.z, g.x, g.z)).slice(0, SWARM_CAP - 1);
     for (const o of pals) o.assign = { type: 'hunt', e: g, fx: 0, fz: 0 }; if (pals.length && !this.huntLogged.has('sw' + g.id + ':' + this.nightKey())) this.huntLogged.add('sw' + g.id + ':' + this.nightKey()), this.log(`${v.name} called ${pals.map(o => o.name).join(', ')} to swarm ${/^[AEIOU]/.test(this.tribes[g.guardOf].name) ? 'an' : 'a'} ${this.tribes[g.guardOf].name} guard, ${g.name}.`, 'vamp'); }
   // resolve a swarm vs a guard: one 40/60 roll per vampire; the guard must win every roll. Vampires are only ever injured; Stefan can't be driven off.
-  resolveGuard(g, vs) { const tr = this.tribes[g.guardOf]; vs = vs.filter((v, i, a) => v && v.alive && v.name !== 'Stefan' && a.indexOf(v) === i).slice(0, SWARM_CAP); const n = vs.length; if (!n) return true;
+  resolveGuard(g, vs, allyN = 0) { const tr = this.tribes[g.guardOf]; vs = vs.filter((v, i, a) => v && v.alive && v.name !== 'Stefan' && a.indexOf(v) === i).slice(0, SWARM_CAP); const n = vs.length; if (!n) return true;
     const B = this.gstats.bySize[n] || (this.gstats.bySize[n] = { encounters: 0, guardSurvived: 0 }); B.encounters++; this.gstats.encounters++; const beaten = [];
-    for (const v of vs) { this.gstats.rolls++; const win = this.r() < GUARD_WIN; if (win) { this.gstats.guardRollWins++; beaten.push(v); v.hp = Math.min(v.hp, 40); v.state = 'retreat'; v.injuredNight = this.nightKey(); v.assign = null; this.gstats.injured++; }
+    const winP = Math.min(0.8, GUARD_WIN + 0.12 * allyN); // v0.13: a fellow guard standing with you steadies your arm
+    for (const v of vs) { this.gstats.rolls++; const win = this.r() < winP; if (win) { this.gstats.guardRollWins++; beaten.push(v); v.hp = Math.min(v.hp, 40); v.state = 'retreat'; v.injuredNight = this.nightKey(); v.assign = null; this.gstats.injured++; }
       else { for (const b of beaten) this.log(`${b.name} was wounded by ${g.name} and retreated to 83 Kingsway.`, 'fight');
         this.die(g, `${/^[AEIOU]/.test(tr.name) ? 'An' : 'A'} ${tr.name} guard, ${g.name}, ${beaten.length ? `drove off ${beaten.map(b => b.name).join(' and ')} but then ` : ''}was caught by ${v.name}${n > 1 ? ` (a swarm of ${n} vampires)` : ''}.`, v); return false; } }
     B.guardSurvived++; g.fear = 40; this.honour(g, REP_WIN, `${g.name} is honoured for driving off ${beaten.map(b => b.name).join(' and ')}.`); this.log(`${/^[AEIOU]/.test(tr.name) ? 'An' : 'A'} ${tr.name} guard, ${g.name}, drove off ${n > 1 ? `a swarm of ${n} vampires (${beaten.map(b => b.name).join(', ')})` : `a vampire, ${beaten[0].name}`}! ${n > 1 ? 'They limp' : 'It limps'} back to 83 Kingsway, wounded.`, 'fight'); return true; }
@@ -177,7 +195,7 @@ export class Sim {
     this.ents.push(e); this.byId.set(e.id, e); return e;
   }
   spawnVampire(x, z, name, turned) {
-    const e = { id: this.nid++, kind: 'v', name: name || this.vampName(), x, z, px: x, pz: z, y: this.w.top(x | 0, z | 0), dir: 0, hp: 150, maxhp: 150,
+    const e = { id: this.nid++, kind: 'v', name: name || this.vampName(), x, z, px: x, pz: z, y: this.w.top(x | 0, z | 0), dir: 0, hp: 170, maxhp: 170, // v0.13: tougher coven
       act: null, path: null, stuck: 0, pathCool: 0, alive: true, walk: 0, cool: 0, kills: 0, turned: !!turned, assign: null, wait: 0, state: 'resting' };
     if (e.name === 'Stefan') { e.hp = e.maxhp = 220; } e.hp = e.maxhp = Math.round(e.maxhp * (1 + 0.7 * this.threat()));
     this.ents.push(e); this.byId.set(e.id, e); return e;
@@ -194,16 +212,38 @@ export class Sim {
   mansionFull(v) { let n = 0; for (const o of this.ents) if (o.kind === 'v' && o.alive && o !== v && (o.inMansion || (o.homePlan && o.homePlan.m))) n++; return n >= MANSION_CAP; }
   hideoutFor(v) { let best = null, bd = 1e9; for (const h of this.hideouts) { if (h.occ.size >= h.cap && !h.occ.has(v.id)) continue; const d = dist(v.x, v.z, h.x, h.z); if (d < bd) { bd = d; best = h; } } return best; }
   leaveHideout(v) { if (v.hideout) { v.hideout.occ.delete(v.id); v.hideout = null; } }
-  findSite(near, maxD = 999) {
+  findSiteNear(tx, tz, quad) {
+    const w = this.w;
+    for (let r = 0; r <= 120; r++) {
+      for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+        const x = tx + dx, z = tz + dz;
+        if (x < 16 || z < 16 || x > W - 17 || z > D - 17) continue;
+        if (quad) { const q = (z < D / 2 ? 'N' : 'S') + (x < W / 2 ? 'W' : 'E'); if (q !== quad) continue; }
+        if (dist(x, z, w.mansion.x, w.mansion.z) < 42) continue;
+        const rg = w.region[z * W + x]; if (rg !== RG.MEADOW && rg !== RG.WOODS && rg !== RG.LAKE) continue;
+        if (this.tribes.some(t => t.alive && dist(x, z, t.cx, t.cz) < 50)) continue;
+        if (this.hideouts && this.hideouts.some(h => dist(x, z, h.x, h.z) < 20)) continue;
+        const g0 = w.ground[z * W + x]; let ok = true, var_ = 0;
+        for (let dz2 = -13; dz2 <= 13 && ok; dz2 += 2) for (let dx2 = -13; dx2 <= 13; dx2 += 2) { const k = (z + dz2) * W + x + dx2; if (w.water[k]) { ok = false; break; } var_ = Math.max(var_, Math.abs(w.ground[k] - g0)); }
+        if (!ok || var_ > 3) continue;
+        return { x, z };
+      }
+    }
+    return null;
+  }
+  findSite(near, maxD = 999, south = false, quad = null) {
     const w = this.w;
     for (let tries = 0; tries < 600; tries++) {
       let x, z;
       if (near && tries < 400) { const a = this.rnd(6.28), d = this.rnd(10, maxD); x = Math.round(near.x + Math.cos(a) * d); z = Math.round(near.z + Math.sin(a) * d); }
       else { x = 24 + (this.rnd(W - 48) | 0); z = 24 + (this.rnd(D - 48) | 0); }
       if (x < 16 || z < 16 || x > W - 17 || z > D - 17) continue;
+      if (south && tries < 500 && z < D / 2 + 10) continue; // v0.13: lower-half settlements stay south of the middle line
+      if (quad && tries < 500) { const q = (z < D / 2 ? 'N' : 'S') + (x < W / 2 ? 'W' : 'E'); if (q !== quad) continue; } // v0.17: a village assigned to a quadrant must land in that quadrant (fallback to anywhere after 500 tries so a village is never lost)
       if (dist(x, z, w.mansion.x, w.mansion.z) < 42) continue;
-      { const rg = w.region[z * W + x]; if (rg === RG.SEA || rg === RG.COAST || rg === RG.HAUNT || rg === RG.MARSH || (tries < 350 && rg !== RG.MEADOW && rg !== RG.LAKE && rg !== RG.WOODS)) continue; }
-      if (this.tribes.some(t => t.alive && dist(x, z, t.cx, t.cz) < 34)) continue;
+      { const rg = w.region[z * W + x]; if (rg !== RG.MEADOW && rg !== RG.WOODS && rg !== RG.LAKE) continue; } // v0.17: villages are only ever founded on meadow, woods, or lakeshore — never on rock, ruins, marsh, or haunted ground, no matter how many tries it takes
+      if (this.tribes.some(t => t.alive && dist(x, z, t.cx, t.cz) < (near ? 34 : tries < 400 ? 50 : 34))) continue; // v0.17: prefer 50 tiles between starting villages, fall back to 34 so a village is never lost
       if (this.hideouts && this.hideouts.some(h => dist(x, z, h.x, h.z) < 20)) continue;
       const g0 = w.ground[z * W + x]; let ok = true, var_ = 0;
       for (let dz = -13; dz <= 13 && ok; dz += 2) for (let dx = -13; dx <= 13; dx += 2) { const k = (z + dz) * W + x + dx; if (w.water[k]) { ok = false; break; } var_ = Math.max(var_, Math.abs(w.ground[k] - g0)); }
@@ -246,7 +286,7 @@ export class Sim {
   }
   nearestNode(e, types, maxD = 90) {
     let best = null, bd = maxD;
-    for (const n of this.w.nodes) { if (n.amt <= 0 || n.dead || !types.includes(n.type) || (e.skipNode && e.skipNode.n === n && this.tick < e.skipNode.until)) continue; const d = Math.abs(n.x - e.x) + Math.abs(n.z - e.z); if (d < bd) { if (n.claim && n.claim !== e.id && this.byId.get(n.claim)?.alive && this.r() < 0.7) continue; bd = d; best = n; } }
+    for (const n of this.w.nodes) { if (n.amt <= 0 || n.dead || n.held || !types.includes(n.type) || (e.skipNode && e.skipNode.n === n && this.tick < e.skipNode.until)) continue; const d = Math.abs(n.x - e.x) + Math.abs(n.z - e.z); if (d < bd) { if (n.claim && n.claim !== e.id && this.byId.get(n.claim)?.alive && this.r() < 0.7) continue; bd = d; best = n; } }
     return best;
   }
   // ---------- passability & movement ----------
@@ -324,6 +364,9 @@ export class Sim {
   // 2) cliff-ringed rock plateaus that could be walked down but never back up → scree ramps (rubble cells allow a 3-step) on the easiest cliff spots
   fixRocks() { const w = this.w, P = { kind: 'p' }, out = { ledges: 0, ramps: 0, compsBefore: 0, compsAfter: 0, unjoined: 0 }, m = w.mansion;
     const isRock = b => b === B.STONE || b === B.MOSS || b === B.COBBLE;
+    // v0.13: a rubble tile must never stand taller than a 3-step, or the rubble flag lies and walkers wedge on it.
+    // Trimming the top blocks off a tall rubble column is invisible (one rock sprite per tile) and makes the flag true.
+    const trim = (x, z, max = 3) => { const k = z * W + x; let cut = false; for (let guard = 0; w.stack[k] > max && guard < 8; guard++) { const y = w.ground[k] + w.stack[k] - 1; w.data[w.idx(x, y, z)] = 0; w.recalcStack(x, z); cut = true; } if (cut) w.dirty.add((x >> 5) + "," + (z >> 5)); return cut; };
     for (let z = 1; z < D - 1; z++) for (let x = 1; x < W - 1; x++) { const k = z * W + x; if (w.rubble[k] || w.water[k] || w.gates.has(k)) continue; const st = w.stack[k]; if (st < 2 || st > 3) continue; if (Math.abs(x - m.x) < 10 && Math.abs(z - m.z) < 9) continue;
       let ok = true; for (let y = w.ground[k]; y < w.ground[k] + st; y++) if (!isRock(w.get(x, y, z))) { ok = false; break; } if (ok) { w.rubble[k] = 1; out.ledges++; } }
     const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]], comp = new Int32Array(W * D);
@@ -336,11 +379,11 @@ export class Sim {
           let L = cand.get(c); if (!L) cand.set(c, L = []); L.push([diff, k, nk]); } }
       if (!cand.size) break;
       for (const [c, L] of cand) { L.sort((a, b) => a[0] - b[0]); const want = Math.max(2, Math.min(12, Math.round(sizes[c] / 1500))), picked = [];
-        for (const [, k, nk] of L) { if (picked.length >= want) break; const x = k % W, z = (k / W) | 0; if (picked.some(p => Math.abs(p[0] - x) + Math.abs(p[1] - z) < 24)) continue; picked.push([x, z]); w.rubble[k] = 1; w.rubble[nk] = 1; out.ramps++; } }
+        for (const [, k, nk] of L) { if (picked.length >= want) break; const x = k % W, z = (k / W) | 0; if (picked.some(p => Math.abs(p[0] - x) + Math.abs(p[1] - z) < 24)) continue; picked.push([x, z]); w.rubble[k] = 1; w.rubble[nk] = 1; trim(x, z); trim(nk % W, (nk / W) | 0); out.ramps++; } }
       sizes = label(); }
     // 3) mesas too tall for scree (cliff 4+ all round): cut a 2-wide stone stair into the cliff, 1 block per tile, at the lowest edge(s)
     out.stairs = 0; const nearVillage = (x, z) => this.tribes.some(t => Math.hypot(t.x - x, t.z - z) < 11) || (Math.abs(x - m.x) < 16 && Math.abs(z - m.z) < 15);
-    const lower = (x, z, t) => { const k = z * W + x; if (w.water[k] || w.ground[k] <= t) return true; if (w.stack[k] > 0 && !w.rubble[k]) return false; const surf = w.get(x, w.ground[k] - 1, z) || B.STONE;
+    const lower = (x, z, t) => { const k = z * W + x; if (w.water[k] || w.ground[k] <= t) return true; if (w.stack[k] > 0 && !w.rubble[k]) { let rock = true; for (let y = w.ground[k]; y < w.ground[k] + w.stack[k]; y++) if (!isRock(w.get(x, y, z))) { rock = false; break; } if (!rock) return false; } /* v0.13: stairs may cut through solid rock, never through trees/structures */ const surf = w.get(x, w.ground[k] - 1, z) || B.STONE;
       for (let y = t; y < w.ground[k] + w.stack[k] + 1 && y < H; y++) w.data[w.idx(x, y, z)] = 0; w.ground[k] = t; w.data[w.idx(x, t - 1, z)] = surf === B.GRASS ? B.GRASS : B.STONE; w.recalcStack(x, z); w.rubble[k] = 1; w.dirty.add((x >> 5) + "," + (z >> 5)); return true; };
     for (let pass = 0; pass < 6; pass++) { const main = comp[((Dp.z + 1) | 0) * W + (Dp.x | 0)]; const best = new Map();
       for (let z = 2; z < D - 2; z++) for (let x = 2; x < W - 2; x++) { const k = z * W + x, c = comp[k]; if (c < 0 || c === main || sizes[c] < 6 || nearVillage(x, z)) continue;
@@ -354,6 +397,8 @@ export class Sim {
           if (!ok) continue; for (const [X, Z, t] of cells) lower(X, Z, t); picked.push([x, z]); out.stairs++; (out.stairAt = out.stairAt || []).push([x, z, dx, dz, diff]); did++; } }
       if (!did) break; sizes = label(); }
     { const main = comp[((Dp.z + 1) | 0) * W + (Dp.x | 0)]; out.compsAfter = sizes.filter(n => n >= 20).length; out.unjoined = sizes.reduce((a, n, i) => a + (i !== main && n >= 20 ? n : 0), 0); out.mainSize = sizes[main]; }
+    { // v0.13 final sweep: every rubble tile on the map, whatever pass marked it, is trimmed to a 3-step so nothing wedges on a rubble square
+      let trimmed = 0; for (let z = 1; z < D - 1; z++) for (let x = 1; x < W - 1; x++) { const k = z * W + x; if (w.rubble[k] && w.stack[k] > 3 && trim(x, z)) trimmed++; } out.trimmed = trimmed; }
     return out; }
   // ---------- v0.12.1 anti-stuck helpers ----------
   blockedTile(e, x, z) { const w = this.w; if (!w.inb(x, z)) return true; const k = z * W + x; if (w.gates.has(k)) return false; return !!(w.water[k] || (w.stack[k] > 1 && !(w.rubble && w.rubble[k] && w.stack[k] <= 3))); }
@@ -501,7 +546,7 @@ export class Sim {
     if (this.tick % 100 === 0) { this.ents = this.ents.filter(e => e.alive || this.tick - e.died < 300); }
   }
   updateNodesAndFarms() {
-    for (const n of this.w.nodes) if (n.amt <= 0 && !n.dead && n.timer > 0) { n.timer -= 20; if (n.timer <= 0) this.regrowNode(n); }
+    for (const n of this.w.nodes) if (n.amt <= 0 && !n.dead && !n.held && n.timer > 0) { n.timer -= 20; if (n.timer <= 0) this.regrowNode(n); }
     const day = !this.isNight();
     for (const tr of this.tribes) for (const f of tr.farms) if (f.stage >= 0 && f.stage < 3 && day) { f.timer += 20; if (f.timer > 260) { f.timer = 0; f.stage++; this.setCrop(f); } }
   }
@@ -529,24 +574,26 @@ export class Sim {
   }
   shelterCount() { let inHut = 0, inWalls = 0, hidden = 0, out = 0; for (const e of this.thronglets()) { if (e.tribe == null) continue; if (e.inHut) inHut++; else if (this.safeAt(e.x, e.z)) inWalls++; else if (e.hidden) hidden++; else out++; } return { inHut, inWalls, hidden, out }; }
   nightfall() {
-    const vs = this.vamps(); const want = Math.max(1, Math.round(Math.min(VAMP_CAP, 1 + Math.floor((this.day - 1) / 2) + Math.floor(this.day / 6)) * this.ease()));
-    const arrivals = Math.min(this.day >= 10 ? 2 : 1, want - vs.length, VAMP_CAP - vs.length);
+    const vs = this.vamps(); const want = Math.max(1, Math.round(Math.min(VAMP_CAP, 2 + this.day + Math.floor(this.day / 3)) * this.ease())); // v0.13: faster coven growth
+    const arrivals = Math.min(this.day >= 6 ? 3 : 2, want - vs.length, VAMP_CAP - vs.length);
     for (let k = 0; k < arrivals; k++) { const Dp = this.doorPt(), sp = this.nearWalk({ kind: 'v' }, Dp.x + this.rnd(-1.5, 1.5), Dp.z + 1 + this.rnd(0, 1.5), 12) || { x: Dp.x, z: Dp.z + 1 }; const v = this.spawnVampire(sp.x, sp.z); // v0.12.1: arrive on walkable ground at the red door, not inside the house
       this.log(v.name === 'Stefan' ? `The red door of 83 Kingsway creaks open. Stefan, the vampire, wakes hungry.` : `${v.name} arrives at 83 Kingsway to hunt beside Stefan.`, 'vamp'); }
     this.huntLogged.clear(); { const c = this.shelterCount(); (this.nightStats = this.nightStats || []).push({ day: this.day, ...c, kills0: this.stats.kills, deaths0: this.stats.deaths }); }
     this.storm = this.day >= 2 && this.r() < 0.4; if (this.storm) { this.stats.storms = (this.stats.storms || 0) + 1; this.log(`A storm breaks over 83 Kingsway. Rain hammers the island and masks every whimper — hiding will be easier tonight.`, 'hide'); }
+    // v0.19: volcano eruption is a live event, not just terrain. 35% of nights from day 1.
+    this.volcanoErupt = this.r() < 0.35; if (this.volcanoErupt) { this.stats.eruptions = (this.stats.eruptions || 0) + 1; this.log(`🌋 The volcano in the north-east ERUPTS! Ash and embers rain down around it, and the night sky glows orange.`, 'vamp'); }
   }
   dawn() {
     this.guardDay(); /* v0.12.2 reputation trickle for guards on duty */
     for (const e of this.thronglets()) { e.lockedOut = false; e.ateEve = false; }
-    if (this.vamps().some(v => v.name === 'Stefan' && v.alive)) this.log(`At dawn, Stefan retreated to 83 Kingsway${this.storm ? ' as the storm blew itself out' : ''}.`, 'vamp'); this.storm = false; this.lowPlan(); this.sendMigrants();
+    if (this.vamps().some(v => v.name === 'Stefan' && v.alive)) this.log(`At dawn, Stefan retreated to 83 Kingsway${this.storm ? ' as the storm blew itself out' : ''}${this.volcanoErupt ? ' as the volcano quieted' : ''}.`, 'vamp'); this.storm = false; this.volcanoErupt = false; this.lowPlan(); this.sendMigrants();
     for (const tr of this.tribes) {
       if (!tr.alive) continue; const m = this.members(tr); if (!m.length) continue;
       let chief = null, cs = -1e9; for (const e of m) { const s = this.rep(e) + e.traits.bravery * 10 + Math.min(10, (this.tick - e.born) / DAY * 2); if (s > cs) { cs = s; chief = e; } }
       if (chief && chief.id !== tr.chief) { tr.chief = chief.id; this.log(`${chief.name} is now the most respected voice in ${tr.name}.`, 'tribe'); }
       let births = 0; const pop = this.thronglets().length;
-      const bcap = pop < 46 ? 3 : 2; /* v0.11.1: gentle low-pop baby boom */
-      while (births < bcap && tr.stock.food >= m.length * 2 + 6 && m.length + births < tr.huts.reduce((a, h) => a + this.hutCap(h), 0) && pop + births < 160) {
+      const bcap = pop < 60 ? 4 : 3; /* v0.13: bigger island, bigger families */
+      while (births < bcap && tr.stock.food >= m.length * 2 + 6 && m.length + births < tr.huts.reduce((a, h) => a + this.hutCap(h), 0) && pop + births < 200) {
         if (m.length < 2) break; const a = m[this.rnd(m.length) | 0], b = m.filter(o => o !== a)[this.rnd(m.length - 1) | 0]; const mut = k => Math.max(0, Math.min(1, (a.traits[k] + b.traits[k]) / 2 + (this.r() - 0.5) * 0.3));
         const c = this.spawnThronglet(tr.cx + this.rnd(-2, 2), tr.cz + this.rnd(-2, 2), { greed: mut('greed'), loyalty: mut('loyalty'), bravery: mut('bravery'), social: mut('social') });
         this.join(c, tr); tr.stock.food -= 6; births++; this.stats.births++; this.assignHomes(tr);
@@ -923,8 +970,8 @@ export class Sim {
     // anything wandering onto the 83 Kingsway grounds is sensed by the whole coven (up to 90 tiles)
     const onTurf = e => dist(e.x, e.z, this.w.mansion.x, this.w.mansion.z) < 34; // trespassers on the 83 Kingsway grounds are always fair game
     if (this.sated() && v.assign && v.assign.type === 'hunt' && !onTurf(v.assign.e)) { v.assign = null; if (!v.satedLog || v.satedLog !== this.nightKey()) { v.satedLog = this.nightKey(); } }
-    const full = this.sated(); if ((this.tick + v.id) % 3 === 0) { const R = full ? 0 : 20 + 10 * this.threat() /* v0.12.2: was 14 + 8*threat */, cur = v.assign && v.assign.type === 'hunt' && v.assign.e.alive ? dist(v.x, v.z, v.assign.e.x, v.assign.e.z) : 1e9; let best = null, bsc = 1e9;
-      for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.hidden || e.bcu) continue; /* v0.12.1: brochure recruits walking to 83 Kingsway are spared */ const d = dist(v.x, v.z, e.x, e.z), turf = cur > 8 && onTurf(e) && d < 90, crowd = this.ents.reduce((n, o) => n + (o.kind === 'v' && o !== v && o.alive && o.assign && o.assign.e === e ? 1 : 0), 0), live = e.attackedAt && this.tick - e.attackedAt < 30, sc = d + (live ? -12 : crowd * 25) - (turf ? 1000 : 0); if (crowd >= SWARM_CAP) continue; if ((d < R || turf || (live && d < 30)) && (turf || d < cur * 0.6) && sc < bsc && !this.safeAt(e.x, e.z)) { bsc = sc; best = e; } }
+    const full = this.sated(); if ((this.tick + v.id) % 3 === 0) { const R = full ? 0 : 30 + 14 * this.threat() /* v0.13: was 20 + 10*threat — the coven scents prey from farther off */, cur = v.assign && v.assign.type === 'hunt' && v.assign.e.alive ? dist(v.x, v.z, v.assign.e.x, v.assign.e.z) : 1e9; let best = null, bsc = 1e9;
+      for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.hidden || e.bcu) continue; /* v0.12.1: brochure recruits walking to 83 Kingsway are spared */ const d = dist(v.x, v.z, e.x, e.z), turf = cur > 8 && onTurf(e) && d < 90, crowd = this.ents.reduce((n, o) => n + (o.kind === 'v' && o !== v && o.alive && o.assign && o.assign.e === e ? 1 : 0), 0), live = e.attackedAt && this.tick - e.attackedAt < 30, sc = d + (live ? -12 : crowd * 25) - (turf ? 1000 : 0); if (crowd >= SWARM_CAP) continue; if ((d < R || turf || (live && d < 45)) && (turf || d < cur * 0.6) && sc < bsc && !this.safeAt(e.x, e.z)) { bsc = sc; best = e; } }
       if (best && !(v.assign && v.assign.e === best)) { v.assign = { type: 'hunt', e: best, fx: 0, fz: 0 }; if (best.state !== 'flee') { best.fear = Math.max(best.fear || 0, 60); } } }
     // v0.11 mansion guards: 1-3 vampires (never Stefan) patrol the 83 Kingsway grounds at night and pounce on anything that wanders in
     if (this.isGuard(v)) { const m = this.w.mansion; v.guard = true;
@@ -943,18 +990,18 @@ export class Sim {
       // v0.10 chase: lunge at close range, bat-hop over anything that blocks the path
       let caught = false;
       const gfast = v.guard && dist(e.x, e.z, this.w.mansion.x, this.w.mansion.z) < 55;
-      if (d < (gfast ? 4.5 : 3.6)) { v.bat = false; const k = Math.min(d, 0.85), lx = v.x, lz = v.z; v.x += (e.x - v.x) / (d || 1) * k; v.z += (e.z - v.z) / (d || 1) * k; if (this.blockedTile(v, v.x | 0, v.z | 0)) { v.x = lx; v.z = lz; } /* v0.12.1: a lunge never ends in water/rock */ v.dir = Math.atan2(e.x - v.x, e.z - v.z); v.walk += k; v.path = null; caught = dist(v.x, v.z, e.x, e.z) < 1.3; if (!v.lunged || this.tick - v.lunged > 60) { v.lunged = this.tick; } }
-      else if (d > 10 || v.stuck > 6 || v.chaseBat > 0) { if (v.stuck > 6) { v.chaseBat = 25; v.stuck = 0; } if (v.chaseBat > 0) v.chaseBat--; this.fly(v, tx, tz, d > 18 ? 1.6 + 0.3 * this.threat() : 1.0); }
-      else { v.bat = false; this.moveTo(v, tx, tz, gfast ? 0.85 : 0.62 + 0.14 * this.threat() * this.ease(), 1.0); }
+      if (d < (gfast ? 5 : 4.2)) { v.bat = false; const k = Math.min(d, 0.85), lx = v.x, lz = v.z; v.x += (e.x - v.x) / (d || 1) * k; v.z += (e.z - v.z) / (d || 1) * k; if (this.blockedTile(v, v.x | 0, v.z | 0)) { v.x = lx; v.z = lz; } /* v0.12.1: a lunge never ends in water/rock */ v.dir = Math.atan2(e.x - v.x, e.z - v.z); v.walk += k; v.path = null; caught = dist(v.x, v.z, e.x, e.z) < 1.3; if (!v.lunged || this.tick - v.lunged > 60) { v.lunged = this.tick; } }
+      else if (d > 10 || v.stuck > 6 || v.chaseBat > 0) { if (v.stuck > 6) { v.chaseBat = 25; v.stuck = 0; } if (v.chaseBat > 0) v.chaseBat--; this.fly(v, tx, tz, d > 18 ? 1.9 + 0.4 * this.threat() : 1.1); }
+      else { v.bat = false; this.moveTo(v, tx, tz, gfast ? 0.9 : 0.72 + 0.18 * this.threat() * this.ease(), 1.0); }
       if (caught && this.lyingLow(e) && (dist(e.x, e.z, this.w.mansion.x, this.w.mansion.z) >= 34 || this.tribes[e.tribe].members.size <= 2)) { v.assign = null; return; } /* v0.12.1: a village's last two are spared even near 83 Kingsway */
-      if (caught && e.guardOf != null && e.alive) { if (v.name === 'Stefan') { v.assign = null; return; } if (v.cool > 0) return; v.cool = 4; if (!e.rallied) { e.rallied = this.tick; this.rally(e, v); } if (this.tick - e.rallied < 25 && e.fear < 99) { const near = this.ents.filter(o => o.kind === 'v' && o !== v && o.alive && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) < 7); if (near.length && near.some(o => dist(o.x, o.z, e.x, e.z) > 2.5)) return; } e.rallied = 0; const sw = this.ents.filter(o => o.kind === 'v' && o.alive && o !== v && !o.batHome && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) < 7); this.resolveGuard(e, [v, ...sw]); return; }
+      if (caught && e.guardOf != null && e.alive) { if (v.name === 'Stefan') { v.assign = null; return; } if (v.cool > 0) return; v.cool = 4; if (!e.rallied) { e.rallied = this.tick; this.rally(e, v); } if (this.tick - e.rallied < 25 && e.fear < 99) { const near = this.ents.filter(o => o.kind === 'v' && o !== v && o.alive && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) < 7); if (near.length && near.some(o => dist(o.x, o.z, e.x, e.z) > 2.5)) return; } e.rallied = 0; const sw = this.ents.filter(o => o.kind === 'v' && o.alive && o !== v && !o.batHome && o.assign && o.assign.e === e && dist(o.x, o.z, e.x, e.z) < 7); const allies = this.ents.filter(o => o.kind === 't' && o !== e && o.alive && o.guardOf === e.guardOf && dist(o.x, o.z, e.x, e.z) < 6).length; this.resolveGuard(e, [v, ...sw], allies); return; }
       if (caught) {
         if (v.cool > 0) return; const tf = onTurf(e); v.cool = tf ? 3 : 3; // on 83 Kingsway's own grounds the coven is at its deadliest
-        e.hp -= (40 + 20 * this.threat()) * (0.5 + 0.5 * this.ease()) * (tf ? 1.7 : 1); e.fear = 100; e.attackedBy = v.name; e.attackedAt = this.tick; this.stats.attacks++;
+        e.hp -= (46 + 24 * this.threat()) * (0.5 + 0.5 * this.ease()) * (tf ? 1.7 : 1); e.fear = 100; e.attackedBy = v.name; e.attackedAt = this.tick; this.stats.attacks++;
         const pack = this.vamps().filter(o => dist(o.x, o.z, e.x, e.z) < 5);
         if (!this.huntLogged.has('a' + e.id)) { this.huntLogged.add('a' + e.id); this.log(pack.length > 1 ? `${pack.map(o => o.name).join(' and ')} cornered ${e.exile ? 'exile ' : ''}${e.name}${this.ofV(e)} ${this.placeName(e.x, e.z)}.` : `${v.name} sank fangs into ${e.exile ? 'exile ' : ''}${e.name}${this.ofV(e)} ${this.placeName(e.x, e.z)}.`, 'vamp'); }
         if (e.hp <= 0) { this.die(e, `${e.name}${e.exile ? ', the exile,' : this.ofV(e)} was drained by ${v.name}.`, v);
-          if (this.r() < (this.thronglets().length > 30 ? 0.22 : 0.06) && this.vamps().length < VAMP_CAP) { const nv = this.spawnVampire(e.x, e.z, e.name + ' the Turned', true); nv.state = 'prowl'; this.stats.turned++; this.log(`${e.name}${this.ofV(e)} rose again with red eyes — ${nv.name} now hunts with Stefan.`, 'vamp'); }
+          if (this.r() < (this.thronglets().length > 30 ? 0.35 : 0.1) && this.vamps().length < VAMP_CAP) { const nv = this.spawnVampire(e.x, e.z, e.name + ' the Turned', true); nv.state = 'prowl'; this.stats.turned++; this.log(`${e.name}${this.ofV(e)} rose again with red eyes — ${nv.name} now hunts with Stefan.`, 'vamp'); }
           v.assign = null; }
       }
       return;
@@ -1031,6 +1078,19 @@ export class Sim {
       this.log(`You carried ${e.name} to ${to}${p.snapped ? ' (set down on the nearest solid ground)' : ''}.`, 'god'); }
     return p; }
   godPenguin(x, z) { if (this.penguins().length >= BEDROOMS) { this.log(`Every bedroom at 83 Kingsway is full — no room for another penguin.`, 'god'); return null; } const p = this.spawnPenguin(x, z); this.log(`A god placed a penguin, ${p.name}, ${this.placeName(x, z)}.`, 'god'); return p; }
+  // ---------- v0.13: pick up & move resource nodes (god's hand for map assets, not just creatures) ----------
+  nodeBlock(n) { return n.type === 'berry' ? B.BERRY : n.type === 'nut' ? B.NUTLEAF : n.type === 'reed' ? B.REED : n.type === 'stone' ? B.STONE : B.LOG; }
+  canGrabNode(n) { return !!(n && !n.held && !n.tree && !n.dead && n.amt > 0 && ['berry', 'nut', 'reed', 'stone', 'wood'].includes(n.type)); }
+  grabNode(n) { if (!this.canGrabNode(n)) return null; n.ox = n.x; n.oz = n.z; n.heldAmt = n.amt; n.amt = 0; n.held = true; n.timer = 0;
+    for (const [x, y, z] of n.blocks) this.w.set(x, y, z, 0);
+    this.gstatsNode = this.gstatsNode || { grabs: 0, drops: 0 }; this.gstatsNode.grabs++; return n; }
+  carryNode(n, x, z) { if (!n || !n.held || !Number.isFinite(x) || !Number.isFinite(z)) return; n.x = Math.max(1, Math.min(W - 2, x)); n.z = Math.max(1, Math.min(D - 2, z)); }
+  dropNode(n, x, z) { if (!n || !n.held) return null; const w = this.w; let X = Math.max(1, Math.min(W - 2, x | 0)), Z = Math.max(1, Math.min(D - 2, z | 0));
+    const okAt = (a, b) => { if (!w.inb(a, b)) return false; const k = b * W + a; if (w.water[k] || w.gates.has(k) || w.stack[k] > 0) return false; const m = w.mansion; if (Math.abs(a + 0.5 - m.x) < 8 && Math.abs(b + 0.5 - m.z) < 7) return false; return true; };
+    if (!okAt(X, Z)) { let found = null; for (let r = 1; r < 60 && !found; r++) for (let dz = -r; dz <= r && !found; dz++) for (let dx = -r; dx <= r; dx++) { if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue; if (okAt(X + dx, Z + dz)) { found = [X + dx, Z + dz]; break; } }
+      if (found) { X = found[0]; Z = found[1]; } else { X = Math.max(1, Math.min(W - 2, n.ox | 0)); Z = Math.max(1, Math.min(D - 2, n.oz | 0)); } }
+    const g = w.top(X, Z), b = this.nodeBlock(n); w.set(X, g, Z, b); n.blocks = [[X, g, Z]]; w.nodeAt.delete((n.oz | 0) * W + (n.ox | 0)); w.nodeAt.set(Z * W + X, n); n.x = X; n.z = Z; n.amt = n.heldAmt || 1; n.heldAmt = 0; n.held = false; n.timer = 0; n.dead = false;
+    this.gstatsNode.drops++; this.log(`You moved ${n.type === 'berry' ? 'a berry bush' : n.type === 'nut' ? 'a nut cache' : n.type === 'reed' ? 'a reed bed' : n.type === 'stone' ? 'a stone pile' : 'a log pile'} to ${this.placeName(X, Z)}.`, 'god'); return { x: X + 0.5, z: Z + 0.5 }; }
   godDrop(type, x, z) {
     const w = this.w; x |= 0; z |= 0; if (!w.inb(x, z) || w.water[z * W + x]) return false;
     const g = w.top(x, z); let blocks = [];

@@ -2,6 +2,8 @@
 import { World, W, D } from './world.js';
 import { Sim, DAY, TPS } from './sim.js';
 import { Renderer } from './render2d.js';
+import { audio } from './audio.js';
+import { item as itemArt } from './art.js';
 
 const canvas = document.getElementById('c');
 const R = new Renderer(canvas);
@@ -19,26 +21,39 @@ const screenOf = e => [innerWidth / 2 + ((e.rx ?? e.x) - cam.tx) * cam.scale, in
 const ptrs = new Map(); let gesture = null, mode = 'select';
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 // v0.12: long-press (~350 ms) on any moving creature to pick it up, drag, release to drop. Short taps and pans are unchanged.
-const GRAB_MS = 350; let held = null;
-function tryGrab(p) { if (p.moved || ptrs.size !== 1 || held || mode !== 'select') return; const e = pickEntity(p.x, p.y); if (!e || !sim.canGrab(e)) return;
-  held = sim.grab(e); if (!held) return; p.grab = held; p.gdx = 0; p.gdy = 0; cam.follow = null; updateFollowUI(); try { navigator.vibrate && navigator.vibrate(15); } catch (_) { } canvas.style.cursor = 'grabbing'; moveHeld(p); }
-function moveHeld(p) { if (!held) return; const h = toWorld(p.x, p.y + Math.min(40, cam.scale * 0.9)); sim.carry(held, h.x, h.z); } // under the finger, a little below so the finger doesn't hide it
-function dropHeld(p, cancel) { if (!held) return; const e = held; held = null; canvas.style.cursor = ''; const h = cancel ? { x: e.heldFrom.x, z: e.heldFrom.z } : toWorld(p.x, p.y + Math.min(40, cam.scale * 0.9)); sim.drop(e, h.x, h.z); if (selected && selected !== e) renderInspector(); }
-canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); const p = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() }; ptrs.set(e.pointerId, p); if (ptrs.size === 2 && !held) gesture = twoInfo();
+const GRAB_MS = 350; let held = null, heldNode = null, heldScreen = null;
+function pickNode(x, z) { let best = null, bd = 1.8; for (const n of sim.w.nodes) { if (!sim.canGrabNode(n)) continue; const d = Math.hypot(n.x + 0.5 - x, n.z + 0.5 - z); if (d < bd) { bd = d; best = n; } } return best; }
+function tryGrab(p) { if (p.moved || ptrs.size !== 1 || held || heldNode || mode !== 'select') return; const e = pickEntity(p.x, p.y);
+  if (e && sim.canGrab(e)) { held = sim.grab(e); if (!held) return; p.grab = held; p.gdx = 0; p.gdy = 0; cam.follow = null; updateFollowUI(); try { navigator.vibrate && navigator.vibrate(15); } catch (_) { } canvas.style.cursor = 'grabbing'; audio.pickup(); moveHeld(p); return; }
+  const h = toWorld(p.x, p.y); const n = pickNode(h.x, h.z); // v0.13: no creature under the finger? try a map asset (berry bush, log pile, stone…)
+  if (n) { heldNode = sim.grabNode(n); if (!heldNode) return; p.node = heldNode; heldScreen = { x: p.x, y: p.y }; cam.follow = null; updateFollowUI(); try { navigator.vibrate && navigator.vibrate(15); } catch (_) { } canvas.style.cursor = 'grabbing'; audio.pickup(); moveHeld(p); } }
+function moveHeld(p) { const h = toWorld(p.x, p.y + Math.min(40, cam.scale * 0.9)); heldScreen = { x: p.x, y: p.y }; if (held) sim.carry(held, h.x, h.z); if (heldNode) sim.carryNode(heldNode, h.x, h.z); } // under the finger, a little below so the finger doesn't hide it
+function dropHeld(p, cancel) { const h = toWorld(p.x, p.y + Math.min(40, cam.scale * 0.9));
+  if (heldNode) { const n = heldNode; heldNode = null; heldScreen = null; canvas.style.cursor = ''; sim.dropNode(n, cancel ? n.ox : h.x, cancel ? n.oz : h.z); audio.drop(); if (selected) renderInspector(); }
+  if (!held) return; const e = held; held = null; canvas.style.cursor = ''; const hh = cancel ? { x: e.heldFrom.x, z: e.heldFrom.z } : h; sim.drop(e, hh.x, hh.z); audio.drop(); if (selected && selected !== e) renderInspector(); }
+const nodeIcons = new Map();
+function drawHeldNode() { if (!heldNode || !heldScreen) return; const g = canvas.getContext('2d'); let ic = nodeIcons.get(heldNode.type); if (!ic) { ic = itemArt(heldNode.type); nodeIcons.set(heldNode.type, ic); }
+  const s = 3.2 * renderScale, X = heldScreen.x * renderScale, Y = heldScreen.y * renderScale, bob = Math.sin(performance.now() / 180) * 2 * renderScale;
+  g.save(); g.imageSmoothingEnabled = false; g.globalAlpha = 0.92;
+  g.beginPath(); g.arc(X, Y + bob, 26 * renderScale, 0, 6.283); g.fillStyle = 'rgba(255,240,150,.18)'; g.fill();
+  g.drawImage(ic, X - ic.width * s / 2, Y - ic.height * s / 2 + bob, ic.width * s, ic.height * s); g.restore(); }
+canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); const p = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() }; ptrs.set(e.pointerId, p); if (ptrs.size === 2 && !held && !heldNode) gesture = twoInfo();
+  // v0.26 tap-again-drag: if this press starts on the already-selected creature, a drag picks it up (instead of panning). Long-press still works for any creature.
+  if (mode === 'select' && selected && selected.alive && pickEntity(e.clientX, e.clientY) === selected) p.reselectDrag = true;
   if (ptrs.size === 1) p.timer = setTimeout(() => tryGrab(p), GRAB_MS); else for (const q of ptrs.values()) clearTimeout(q.timer);
   if (e.pointerType === 'mouse' && (e.shiftKey || e.altKey)) { clearTimeout(p.timer); tryGrab(p); } }); // desktop shortcut: shift/alt-click-drag grabs instantly
 canvas.addEventListener('pointermove', e => {
   const p = ptrs.get(e.pointerId); if (!p) return; const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
-  if (p.grab) { moveHeld(p); return; } if (held) return; // second finger while carrying: ignore
-  if (ptrs.size === 1) { if (!p.moved && Math.hypot(p.x - p.sx, p.y - p.sy) < 8) return; p.moved = true; clearTimeout(p.timer); pan(dx, dy); }
+  if (p.grab || p.node) { moveHeld(p); return; } if (held || heldNode) return; // second finger while carrying: ignore
+  if (ptrs.size === 1) { if (!p.moved && Math.hypot(p.x - p.sx, p.y - p.sy) < 8) return; if (!p.moved && p.reselectDrag && !held && !heldNode) { clearTimeout(p.timer); tryGrab(p); if (p.grab || p.node) { p.moved = true; moveHeld(p); return; } p.reselectDrag = false; } p.moved = true; clearTimeout(p.timer); pan(dx, dy); }
   else if (ptrs.size === 2) { const g = twoInfo(); if (gesture) { zoomAt(gesture.d / Math.max(10, g.d), g.cx, g.cy); pan(g.cx - gesture.cx, g.cy - gesture.cy); } gesture = g; for (const q of ptrs.values()) { q.moved = true; clearTimeout(q.timer); } }
 });
 const endPtr = e => { const p = ptrs.get(e.pointerId); if (!p) return; clearTimeout(p.timer); ptrs.delete(e.pointerId); if (ptrs.size < 2) gesture = null;
-  if (p.grab) { dropHeld(p, false); return; }
+  if (p.grab || p.node) { dropHeld(p, false); return; }
   if (!p.moved && e.type === 'pointerup' && performance.now() - p.t < GRAB_MS + 250 && ptrs.size === 0 && !held) tap(e.clientX, e.clientY); };
 canvas.addEventListener('pointerup', endPtr); canvas.addEventListener('pointercancel', endPtr);
 // edge auto-pan while carrying, so you can carry a creature across the island on a phone
-function edgePan(dt) { if (!held) return; const p = [...ptrs.values()].find(q => q.grab); if (!p) return; const m = 40, v = 420 * dt; let dx = 0, dy = 0; if (p.x < m) dx = v; else if (p.x > innerWidth - m) dx = -v; if (p.y < m + 50) dy = v; else if (p.y > innerHeight - m) dy = -v; if (dx || dy) { pan(dx, dy); moveHeld(p); } }
+function edgePan(dt) { if (!held && !heldNode) return; const p = [...ptrs.values()].find(q => q.grab || q.node); if (!p) return; const m = 40, v = 420 * dt; let dx = 0, dy = 0; if (p.x < m) dx = v; else if (p.x > innerWidth - m) dx = -v; if (p.y < m + 50) dy = v; else if (p.y > innerHeight - m) dy = -v; if (dx || dy) { pan(dx, dy); moveHeld(p); } }
 canvas.addEventListener('wheel', e => { e.preventDefault(); zoomAt(Math.exp(e.deltaY * 0.0012), e.clientX, e.clientY); }, { passive: false });
 function zoomAt(f, sx, sy) { const before = toWorld(sx, sy); cam.dist = Math.max(cam.MIN, Math.min(cam.MAX, cam.dist * f)); const after = toWorld(sx, sy); if (!cam.follow) { cam.tx += before.x - after.x; cam.tz += before.z - after.z; } }
 function twoInfo() { const [a, b] = [...ptrs.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 }; }
@@ -60,15 +75,18 @@ function tap(x, y) {
 // ---------- UI ----------
 const $ = s => document.querySelector(s);
 let selected = null;
-function select(e, follow) { selected = e; $('#insp').classList.toggle('hidden', !e); if (e && follow) { cam.follow = e; if (cam.dist > 40) cam.dist = 22; } updateFollowUI(); renderInspector(); }
+function select(e, follow) { if (e) audio.select(); selected = e; $('#insp').classList.toggle('hidden', !e); if (e && follow) { cam.follow = e; if (cam.dist > 40) cam.dist = 22; } updateFollowUI(); renderInspector(); }
 function updateFollowUI() { $('#btnUnfollow').classList.toggle('on', !cam.follow); }
 document.querySelectorAll('.panel').forEach(p => { p.querySelector('.tab').onclick = () => p.classList.remove('collapsed'); const c = p.querySelector('.collapse'); if (c) c.onclick = () => p.classList.add('collapsed'); });
 $('#hideAll').onclick = () => { $('#ui').classList.toggle('hideall'); $('#hideAll').classList.toggle('on'); };
 let speed = 1; function setSpeed(s) { speed = s; document.querySelectorAll('[data-speed]').forEach(b => b.classList.toggle('on', +b.dataset.speed === s)); }
 document.querySelectorAll('[data-speed]').forEach(b => b.onclick = () => setSpeed(+b.dataset.speed));
-const HINTS = { select: 'Tap a creature to follow it. Press and hold one to pick it up, then drag and let go to drop it. Tap a village to trade. Drag to pan; wheel or pinch to zoom; two fingers to pan.', spawn: 'Tap the ground to place a new Thronglet.', spawnP: 'Tap the ground to place a penguin (max 10 — one per mansion bedroom).', spawnV: 'Tap the ground to summon a vampire. It lives at 83 Kingsway (vampire rooms are separate from the 10 penguin bedrooms). By day it returns home.' };
+const HINTS = { select: 'Tap a creature to follow it. Tap it again and drag to pick it up and move it, or press and hold any creature — or a berry bush, log pile or stone — to pick it up, then drag and let go to drop it. Tap a village to trade. Drag to pan; wheel or pinch to zoom; two fingers to pan.', spawn: 'Tap the ground to place a new Thronglet.', spawnP: 'Tap the ground to place a penguin (max 10 — one per mansion bedroom).', spawnV: 'Tap the ground to summon a vampire. It lives at 83 Kingsway (vampire rooms are separate from the 10 penguin bedrooms). By day it returns home.' };
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; document.querySelectorAll('[data-mode]').forEach(o => o.classList.toggle('on', o === b)); $('#modeHint').textContent = HINTS[mode] || `Tap the ground to drop ${mode.slice(5)}.`; });
 $('#btnTumnus').onclick = () => { if (sim.tumnus && sim.tumnus.alive) select(sim.tumnus, true); };
+$('#btnSound').onclick = () => { audio.unlock(); const on = audio.toggle(); $('#btnSound').textContent = on ? '🔊' : '🔇'; $('#btnSound').classList.toggle('on', on); };
+if (audio.muted) $('#btnSound').textContent = '🔇'; else $('#btnSound').classList.add('on');
+addEventListener('pointerdown', () => audio.unlock()); addEventListener('keydown', () => audio.unlock());
 $('#btnUnfollow').onclick = () => { cam.follow = null; updateFollowUI(); };
 $('#btnReset').onclick = () => reset(+$('#seed').value || 1);
 $('#btnFull').onclick = async () => { try { if (!document.fullscreenElement) { await (document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }) ?? document.documentElement.webkitRequestFullscreen?.()); try { await screen.orientation?.lock?.('landscape'); } catch (_) { } } else await document.exitFullscreen(); } catch (_) { } };
@@ -88,18 +106,18 @@ function renderInspector() {
   if (e.kind === 'hut') { const h = e.h, cap = sim.hutCap(h), occ = [...h.occ].map(id => sim.byId.get(id)).filter(Boolean), own = h.owners.map(id => sim.byId.get(id)).filter(Boolean);
     $('#inspTitle').textContent = '🛖 ' + e.tr.name + ' hut'; body.innerHTML = `📍 <b>${e.tr.name}</b> · ${h.level >= 2 ? 'stone' : 'timber'} hut<br>Inside: <b>${occ.length}/${cap}</b>${occ.length ? ' — ' + occ.map(o => o.name).join(', ') : ''}<br>Sleeps here: ${own.map(o => o.name).join(', ') || '—'}<br>🔒 Safe inside — vampires never enter a hut.` + tradeBox(e.tr); return; }
   if (!e.alive) { $('#inspTitle').textContent = e.name + ' †'; body.innerHTML = '<i>Deceased.</i>'; return; }
-  if (e.kind === 'm') { $('#inspTitle').textContent = '🧣 Ian Tumnus'; body.innerHTML = `<img class="portrait" src="assets/tumnus.png" alt="">📍 <b>${Math.hypot(e.x - world.mansion.x, e.z - world.mansion.z) < 14 ? '83 Kingsway grounds' : world.regionAt(e.x, e.z).replace(/^the /, '')}</b><br>Role: <b>Penguin Manager, BlackCardU</b><br>Doing: <b>${e.state}</b><br>Current orders: ${e.orders}<br>Penguins managed: <b>${sim.penguins().length}</b> (${sim.penguins().length}/10 bedrooms)<br>His conversions: <b>${e.conv}</b> · Penguins caught slacking: <b>${e.caught || 0}</b> · Thronglets snitched: ${e.snitches || 0}<br><i>Not a vampire: unhurt by the sun, never enters huts, has his own room at 83 Kingsway.</i>`; return; }
+  if (e.kind === 'm') { $('#inspTitle').textContent = '🧣 Ian Tumnus'; body.innerHTML = `<img class="portrait" src="assets/dir/tumnus/south.png" alt="">📍 <b>${Math.hypot(e.x - world.mansion.x, e.z - world.mansion.z) < 14 ? '83 Kingsway grounds' : world.regionAt(e.x, e.z).replace(/^the /, '')}</b><br>Role: <b>Penguin Manager, BlackCardU</b><br>Doing: <b>${e.state}</b><br>Current orders: ${e.orders}<br>Penguins managed: <b>${sim.penguins().length}</b> (${sim.penguins().length}/10 bedrooms)<br>His conversions: <b>${e.conv}</b> · Penguins caught slacking: <b>${e.caught || 0}</b> · Thronglets snitched: ${e.snitches || 0}<br><i>Not a vampire: unhurt by the sun, never enters huts, has his own room at 83 Kingsway.</i>`; return; }
   if (e.kind === 'p') { $('#inspTitle').textContent = '🐧 ' + e.name; const ST = { napping: 'napping (slacking!)', sliding: 'belly-sliding (slacking!)', fishing: 'fishing (slacking!)', summoned: 'summoned to 83 Kingsway', scolded: 'being scolded', grounded: 'grounded — no outing today', scouting: 'scouting for prey', signalling: 'signalling a vampire', recruiting: 'recruiting for BlackCardU', pitching: 'pitching BlackCardU', returning: 'returning to 83 Kingsway', resting: 'resting at 83 Kingsway' };
-    body.innerHTML = `<img class="portrait" src="assets/penguin.png" alt="">📍 <b>${world.regionAt(e.x, e.z).replace(/^the /, '')}</b><br>State: <b>${ST[e.state] || e.state}</b>${e.pitch ? ' → ' + e.pitch.e.name : ''}<br>Conversions: <b>${e.conv}</b> · Prey spotted: ${e.spots}<br>${e.order ? 'Orders: ' + e.order.label + '<br>' : ''}${e.from ? '<i>Once the Thronglet ' + e.from + '.</i><br>' : ''}Bedroom at 83 Kingsway (${sim.penguins().length}/10 used)<br><i>A BlackCardU minion. Never enters huts, never kills.</i>`; return; }
-  if (e.kind === 'v') { $('#inspTitle').textContent = '🧛 ' + e.name; body.innerHTML = `<img class="portrait" src="assets/stefan.png" alt="">📍 <b>${Math.hypot(e.x - world.mansion.x, e.z - world.mansion.z) < 14 ? '83 Kingsway · ' : ''}${world.regionAt(e.x, e.z).replace(/^the /, '')}</b>${e.bat ? ' · 🦇 bat form' : ''}<br>${bar('Blood (HP) ' + e.hp.toFixed(0), e.hp / e.maxhp * 100, '#c22')}State: <b>${e.state}</b>${e.assign && e.assign.e && !e.batHome && !e.hideout ? ' → ' + e.assign.e.name : ''}<br>${e.batHome ? '🦇 <b>Bat form, flying home</b>' + (e.homePlan && e.homePlan.h ? ' → ' + e.homePlan.h.name : ' → 83 Kingsway') + '<br>' : e.inMansion ? '🏚️ <b>Resting inside 83 Kingsway</b> until dusk<br>' : e.hideout ? '🪨 <b>Resting in ' + e.hideout.name + '</b> — safe from the sun until dusk<br>' : ''}${e.hideout || e.batHome ? '' : sim.inShade(e.x, e.z) ? (sim.isNight() ? '🌑 In the mansion\'s shadow<br>' : '🛡️ <b>Safe in the mansion\'s shadow</b> — the sun can\'t touch it here<br>') : (!sim.vampNight() && sim.dayAmt() > 0.25 && !e.bat && !e.batHome ? '☀️ <b>Burning in the sun!</b><br>' : '')}Kills: ${e.kills}${e.turned ? '<br><i>A turned Thronglet.</i>' : ''}`; return; }
+    body.innerHTML = `<img class="portrait" src="assets/dir/penguin/south.png" alt="">📍 <b>${world.regionAt(e.x, e.z).replace(/^the /, '')}</b><br>State: <b>${ST[e.state] || e.state}</b>${e.pitch ? ' → ' + e.pitch.e.name : ''}<br>Conversions: <b>${e.conv}</b> · Prey spotted: ${e.spots}<br>${e.order ? 'Orders: ' + e.order.label + '<br>' : ''}${e.from ? '<i>Once the Thronglet ' + e.from + '.</i><br>' : ''}Bedroom at 83 Kingsway (${sim.penguins().length}/10 used)<br><i>A BlackCardU minion. Never enters huts, never kills.</i>`; return; }
+  if (e.kind === 'v') { $('#inspTitle').textContent = '🧛 ' + e.name; body.innerHTML = `<img class="portrait" src="assets/dir/vampire/south.png" alt="">📍 <b>${Math.hypot(e.x - world.mansion.x, e.z - world.mansion.z) < 14 ? '83 Kingsway · ' : ''}${world.regionAt(e.x, e.z).replace(/^the /, '')}</b>${e.bat ? ' · 🦇 bat form' : ''}<br>${bar('Blood (HP) ' + e.hp.toFixed(0), e.hp / e.maxhp * 100, '#c22')}State: <b>${e.state}</b>${e.assign && e.assign.e && !e.batHome && !e.hideout ? ' → ' + e.assign.e.name : ''}<br>${e.batHome ? '🦇 <b>Bat form, flying home</b>' + (e.homePlan && e.homePlan.h ? ' → ' + e.homePlan.h.name : ' → 83 Kingsway') + '<br>' : e.inMansion ? '🏚️ <b>Resting inside 83 Kingsway</b> until dusk<br>' : e.hideout ? '🪨 <b>Resting in ' + e.hideout.name + '</b> — safe from the sun until dusk<br>' : ''}${e.hideout || e.batHome ? '' : sim.inShade(e.x, e.z) ? (sim.isNight() ? '🌑 In the mansion\'s shadow<br>' : '🛡️ <b>Safe in the mansion\'s shadow</b> — the sun can\'t touch it here<br>') : (!sim.vampNight() && sim.dayAmt() > 0.25 && !e.bat && !e.batHome ? '☀️ <b>Burning in the sun!</b><br>' : '')}Kills: ${e.kills}${e.turned ? '<br><i>A turned Thronglet.</i>' : ''}`; return; }
   const tr = e.tribe != null ? sim.tribes[e.tribe] : null; const rep = sim.rep(e);
   $('#inspTitle').textContent = `🐾 ${e.name}${tr && tr.chief === e.id ? ' 👑' : ''}`;
   const rel = [...e.op.entries()].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 6).map(([id, v]) => { const o = sim.byId.get(id); return o ? `<span style="color:${v < 0 ? '#f88' : '#8f8'}">${o.name} ${fmt(v)}</span>` : ''; }).join(', ');
   let rank = ''; if (tr) { const m = sim.members(tr).map(o => [o, sim.rep(o)]).sort((a, b) => b[1] - a[1]); rank = ` · rank ${m.findIndex(q => q[0] === e) + 1}/${m.length}`; }
   const inv = Object.entries(e.inv).filter(([, v]) => v).map(([k, v]) => `${k}×${v}`).join(' ') || 'empty';
   const hidTxt = e.hidden ? `<br>🫥 Hidden in the <b>${e.hidden.label}</b> (concealment ${(e.hidden.conceal * 100) | 0}%, ${e.hidden.occ.size}/${e.hidden.cap})` : '';
-  body.innerHTML = `<img class="portrait" src="assets/thronglet.png" alt="">📍 <b>${Math.hypot(e.x - world.mansion.x, e.z - world.mansion.z) < 14 ? '83 Kingsway · ' : ''}${world.regionAt(e.x, e.z).replace(/^the /, '').replace(/^\w/, c => c.toUpperCase())}</b>${sim.storm && sim.isNight() ? ' · ⛈ storm' : ''}${hidTxt}<br>Knows ${e.known ? e.known.size : 0} hiding spot(s)<br>${tr ? `Tribe: <b style="color:#${tr.color.toString(16).padStart(6, '0')}">${tr.name}</b>${rank}` : e.exile ? '<b style="color:#ffb04a">EXILE</b> — banished, alone' : 'Wanderer'}<br>
-  Doing: <b>${e.state}</b> · Reputation: <b style="color:${rep < 0 ? '#f88' : '#8f8'}">${fmt(rep)}</b><br>
+  body.innerHTML = `<img class="portrait" src="assets/dir/${e.guardOf != null ? 'guard' : 'thronglet'}/south.png" alt="">📍 <b>${Math.hypot(e.x - world.mansion.x, e.z - world.mansion.z) < 14 ? '83 Kingsway · ' : ''}${world.regionAt(e.x, e.z).replace(/^the /, '').replace(/^\w/, c => c.toUpperCase())}</b>${sim.storm && sim.isNight() ? ' · ⛈ storm' : ''}${hidTxt}<br>Knows ${e.known ? e.known.size : 0} hiding spot(s)<br>${tr ? `Tribe: <b style="color:#${tr.color.toString(16).padStart(6, '0')}">${tr.name}</b>${rank}` : e.exile ? '<b style="color:#ffb04a">EXILE</b> — banished, alone' : 'Wanderer'}<br>
+  Doing: <b>${e.state}</b>${e.guardOf != null ? ` · 🛡 <b>Guard of ${sim.tribes[e.guardOf].name}</b> — stands the night watch` : ''} · Reputation: <b style="color:${rep < 0 ? '#f88' : '#8f8'}">${fmt(rep)}</b><br>
   ${bar('HP', e.hp, '#d44')}${bar('Hunger', e.hunger, '#da4')}${bar('Energy', e.energy, '#4ad')}${bar('Fear', e.fear, '#a4d')}
   Traits: greed ${(e.traits.greed * 100) | 0} · loyalty ${(e.traits.loyalty * 100) | 0} · bravery ${(e.traits.bravery * 100) | 0}<br>
   Carrying: ${inv}<br>Bad acts: hoard ${e.bad.hoard}, abandon ${e.bad.abandon}, attack ${e.bad.attack}<br>Opinions: ${rel || '—'}<br>
@@ -149,11 +167,11 @@ function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   acc += dt * 1000 * speed; let n = 0; const maxT = 48; while (acc >= DT && n < maxT) { sim.step(); acc -= DT; n++; } if (n >= maxT) acc = 0;
   R.flush(); keyMove(dt); edgePan(dt); applyCam(dt);
-  R.render(cam, Math.min(1, acc / DT), dt, selected, renderScale); frames++; MM.draw(now);
-  if (now - fpsT > 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; $('#stFps').textContent = fps.toFixed(0) + ' fps'; updateTop(); renderInspector(); window.DF.fps = fps; if (!window.DF.lockScale && fps < 32 && renderScale > 1) { renderScale = Math.max(1, renderScale - 0.25); resize(); } }
+  R.render(cam, Math.min(1, acc / DT), dt, selected, renderScale); drawHeldNode(); frames++; MM.draw(now);
+  if (now - fpsT > 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; $('#stFps').textContent = fps.toFixed(0) + ' fps'; updateTop(); renderInspector(); audio.setMood(sim.dayAmt(), !!sim.storm); window.DF.fps = fps; if (!window.DF.lockScale && fps < 32 && renderScale > 1) { renderScale = Math.max(1, renderScale - 0.25); resize(); } }
 }
 $('#btnLabels').onclick = () => { R.showLabels = !R.showLabels; $('#btnLabels').classList.toggle('on', R.showLabels); };
-window.DF = { get held() { return held; }, cam, renderer: R, get speed() { return speed; }, setSpeed, select, flushChunks, setMode: m => document.querySelector(`[data-mode="${m}"]`)?.click(),
+window.__audio = audio; window.DF = { get held() { return held; }, cam, renderer: R, get speed() { return speed; }, setSpeed, select, flushChunks, setMode: m => document.querySelector(`[data-mode="${m}"]`)?.click(),
   selectedName: () => selected && selected.name, screenOf, fast(n) { for (let i = 0; i < n; i++) sim.step(); }, setScale(s) { renderScale = s; window.DF.lockScale = true; resize(); }, reset };
 reset(42); resize(); if (innerHeight < 500) { $('#tools').classList.add('collapsed'); $('#log').classList.add('collapsed'); }
 document.fonts?.load?.('16px "Pixelify Sans"'); document.fonts?.load?.('20px "Jacquard 12"');

@@ -25,19 +25,29 @@ const PAL = {
   farm: ['#7a4a2a', '#8f5a34', '#a06a3c', '#5e3820'].map(H2),
 };
 const WATERC = [[76, 196, 196], [52, 168, 186], [38, 140, 172], [28, 112, 152], [20, 84, 126]];
+// scale a packed rgb() colour by f (r in low byte, b in high byte, as rgb() packs it)
+const shadeCol = (c, f) => (255 << 24) | (Math.min(255, Math.round((c >> 16 & 255) * f)) << 16) | (Math.min(255, Math.round((c >> 8 & 255) * f)) << 8) | Math.min(255, Math.round((c & 255) * f));
 export class Renderer {
   constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d', { alpha: false }); this.chunks = new Map(); this.objs = new Map(); this.spr = new Map(); this.parts = []; this.showLabels = true; this.t = 0;
     this.light = cv(8, 8); this.lctx = this.light.getContext('2d'); this.glowC = {};
     for (const [k, c] of Object.entries({ warm: [255, 170, 80], red: [255, 40, 40], cool: [150, 190, 255], green: [200, 255, 120], purple: [190, 110, 255] })) { const g = cv(64, 64), x = g.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, `rgba(${c},1)`); gr.addColorStop(0.35, `rgba(${c},.55)`); gr.addColorStop(1, `rgba(${c},0)`); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); this.glowC[k] = g; }
     this.ripple = this.makeRipple(0); this.ripple2 = this.makeRipple(1); this.fogTex = this.makeFog();
-    this.lod = { thronglet: [], stefan: [], penguin: [], tumnus: [] }; for (const [n, hs] of [['thronglet', [24, 48, 96, 192]], ['stefan', [32, 64, 128, 256]], ['penguin', [24, 48, 96, 192]], ['tumnus', [24, 48, 96, 192]]]) for (const h of [...hs, 'full']) { const im = new Image(); im.onload = () => { this.lod[n].push(im); this.lod[n].sort((a, b) => a.height - b.height); }; im.src = `assets/${n}${h === 'full' ? '' : '_' + h}.png`; } }
+    this.lod = { thronglet: [], stefan: [], penguin: [], tumnus: [], guard: [] }; for (const [n, hs] of [['thronglet', [24, 48, 96, 192]], ['stefan', [32, 64, 128, 256]], ['penguin', [24, 48, 96, 192]], ['tumnus', [24, 48, 96, 192]], ['guard', [24, 48, 96, 192]]]) for (const h of [...hs, 'full']) { const im = new Image(); im.onload = () => { this.lod[n].push(im); this.lod[n].sort((a, b) => a.height - b.height); }; im.src = `assets/${n}${h === 'full' ? '' : '_' + h}.png`; }
+    // v0.15: 8-directional idle sprites, cropped to opaque bbox, with LODs. dir = atan2(dx, dz): 0 = south, PI/2 = east, PI = north.
+    // v0.21 terrain detail: landmark pictures cut (with Kyler's permission) from his own Grok Imagine reference island (26875_7_647f.jpg), masked to an ellipse so they blend into the ground instead of showing a rectangle. Drawn over the ground in render(), so they appear in both close and far views, under characters.
+    this.ref = {}; for (const key of ['volcano', 'jungle', 'snow', 'swamp']) // v0.24: mountain landmark was loaded but never drawn, dropped to save size/memory { const im = new Image(); im.onload = () => { this.ovDirty = true; }; im.src = `assets/ref/${key}.png`; this.ref[key] = im; }
+    // v0.22 far map: Kyler's full reference island, pixelated to 1536x1536 (3x3 pixels per game tile, v0.24) so far view is his image, in pixel form, matching the game's pixel terrain instead of a smooth photo that would pop when you zoom in.
+    this.refFull = new Image(); this.refFull.onload = () => { this.ovDirty = true; }; this.refFull.src = 'assets/ref/full_4608.jpg'; // v0.24: 4608 = 512 x 9, so each game tile now has 9x9 pixels instead of 1, far map stays sharp when you zoom in — true detail is still capped at the original 1408 image, so x9 is smoother interpolation, not new detail, but blocks shrink from 16 art px to ~2 art px
+    this.dirLod = {}; for (const key of ['thronglet', 'guard', 'penguin', 'vampire', 'tumnus', 'bat']) { this.dirLod[key] = {}; for (const d of ['south', 'south-east', 'east', 'north-east', 'north', 'north-west', 'west', 'south-west']) { this.dirLod[key][d] = []; for (const h of [24, 48, 96, 192, 'full']) { const im = new Image(); im.onload = () => { this.dirLod[key][d].push(im); this.dirLod[key][d].sort((a, b) => a.height - b.height); }; im.src = `assets/dir/${key}/${d}${h === 'full' ? '' : '_' + h}.png`; } } } }
   pick(n, px) { const L = this.lod[n]; for (const im of L) if (im.height >= px) return im; return L[L.length - 1]; }
+  dirFor(e) { const dirs = ['south', 'south-east', 'east', 'north-east', 'north', 'north-west', 'west', 'south-west']; return dirs[((Math.round((e.dir || 0) / (Math.PI / 4)) % 8) + 8) % 8]; }
+  pickDir(key, e, px) { const L = (this.dirLod[key] || {})[this.dirFor(e)] || []; const ready = L.filter(im => im.complete && im.naturalWidth); if (!ready.length) return null; for (const im of ready) if (im.height >= px) return im; return ready[ready.length - 1]; }
   S(key, fn) { let c = this.spr.get(key); if (!c) { c = fn(); this.spr.set(key, c); } return c; }
   makeRipple(v) { const c = cv(64, 64), g = c.getContext('2d'); for (let i = 0; i < 26; i++) { const x = hash(i, v, 3) * 64 | 0, y = hash(i, v, 4) * 64 | 0, w = 3 + hash(i, v, 5) * 6 | 0; g.fillStyle = v ? 'rgba(200,250,250,.55)' : 'rgba(150,230,235,.6)'; g.fillRect(x, y, w, 1); if (w > 5) g.fillRect(x + 1, y - 1, w - 3, 1); } return c; }
   makeFog() { const c = cv(96, 96), g = c.getContext('2d'), d = g.createImageData(96, 96); for (let y = 0; y < 96; y++) for (let x = 0; x < 96; x++) { const f = (a, b, s) => { let t = 0; for (const [fr, am] of [[a, 0.6], [b, 0.4]]) { const X = x / 96 * fr, Y = y / 96 * fr; t += am * tileN(X, Y, fr, s); } return t; }; const v = clamp((f(4, 8, 1) - 0.42) * 2.2, 0, 1); const i = (y * 96 + x) * 4; d.data[i] = d.data[i + 1] = d.data[i + 2] = 255; d.data[i + 3] = v * 255; } g.putImageData(d, 0, 0); return c; }
   // ------------------------------------------------------------------ world setup
   setWorld(world, sim) {
-    this.w = world; this.sim = sim; this.chunks.clear(); this.objs.clear(); this.parts = [];
+    this.w = world; this.sim = sim; this.chunks.clear(); this.objs.clear(); this.parts = []; this.ovDirty = true; // v0.21: zoomed-out overview must rebuild for a new world, or the old map lingers after a reset
     const m = world.mansion, mx = Math.floor(m.x), mz = Math.floor(m.z); this.M = { cx: mx, cz: mz, x0: mx - 8, x1: mx + 8, z0: mz - 6, z1: mz + 6 };
     const M = this.M; M.px0 = M.x0 - 2; M.px1 = M.x1 + 2; M.pz0 = M.z0 - 2; M.pz1 = M.z1 + 4;
     // per-tile classification
@@ -64,6 +74,7 @@ export class Renderer {
     if (x >= M.px0 && x <= M.px1 && z >= M.pz0 && z <= M.pz1) t = (z > M.z1 + 2 && Math.abs(x - M.cx + 0.5) < 2) ? T.BRIDGE : (z > M.z1 && z <= M.z1 + 2 && Math.abs(x - M.cx + 0.5) < 3) ? T.BRIDGE : T.GRASS;
     else if (x >= M.px0 - 3 && x <= M.px1 + 3 && z >= M.pz0 - 3 && z <= M.pz1 + 3) { t = (Math.abs(x - M.cx + 0.5) < 2 && z > M.pz1) ? T.BRIDGE : T.GRASS; gs = 1.2; }
     else if (w.water[k] || sb === B.WATER) t = T.WATER;
+    else if (w.region[k] === RG.MARSH) t = T.DIRT; // v0.21: swamp ground is murky dirt in close-up, not beach sand — the murky palette is in bake()
     else if (sb === B.SAND) t = T.SAND; else if (sb === B.STONE || sb === B.COBBLE || sb === B.MOSS) t = T.STONE; else if (sb === B.FARM) t = T.FARM;
     else if (sb === B.GRASS) { t = T.GRASS; const rg = w.region[k]; gs = 0.3 + 0.8 * vnoise(x / 7, z / 7, 5) + (rg === RG.WOODS ? 0.3 : rg === RG.MEADOW ? 0.1 : 0); for (const tr of this.sim.tribes) { const d = Math.hypot(x - tr.cx, z - tr.cz); if (d < 4) gs -= (4 - d) * 0.25; } }
     const inLawn = x >= M.px0 - 3 && x <= M.px1 + 3 && z >= M.pz0 - 3 && z <= M.pz1 + 3; if (inLawn && t === T.GRASS) gs = 1.2; this.tt[k] = t; this.gs[k] = gs; const dm = Math.hypot(x - M.cx, z - M.cz); this.cor[k] = inLawn ? 0 : clamp((44 - dm) / 14 + (vnoise(x / 6, z / 6, 9) - 0.5) * 0.9, 0, 1);
@@ -99,14 +110,26 @@ export class Renderer {
         const sf = bil(sv) + (n1 - 0.5) * 0.3;
         const cr = cor[k] + (n2 - 0.5) * 0.2;
         if (sf > 0.5) { const row = gy >> 2, cell = hash((gx + (row & 1) * 3) >> 3, row, 6); const m = (gy & 3) === 0 || (((gx + (row & 1) * 3) & 7) === 0);
-          col = sf < 0.56 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; if (cr > 0.6 && hr < 0.3) col = PAL.cor[2]; buf[o] = col; continue; }
+          col = sf < 0.56 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; if (cr > 0.6 && hr < 0.3) col = PAL.cor[2];
+          // v0.17 rock relief: the stone branch used to return one flat grey pattern.
+          // Now shade it by height and slope (peaks lighter, steep ground darker, east-facing
+          // slope shaded), with dark crack speckle and light boulder highlights, so rocky
+          // ground reads as relief instead of a flat texture.
+          const hE = w.ground[tget(X + 1, Z)], hW = w.ground[tget(X - 1, Z)], hN = w.ground[tget(X, Z - 1)], slope = Math.abs(hE - hW) + Math.abs(hS - hN);
+          let rf = 0.82 + Math.min(0.28, Math.max(0, (h - 16) * 0.02)) - Math.min(0.18, slope * 0.04) + (hE < h ? 0.06 : 0) - (hE > h ? 0.06 : 0);
+          if (hr < 0.12) rf *= 0.82; else if (hr > 0.92) rf *= 1.12;
+          col = shadeCol(col, rf);
+          if (h > 32) col = shadeCol(H2('#e8eef2'), 0.9 + hr * 0.2); // v0.18: tallest peak tops are snowy, like the NW peak in the reference
+          if (w.region[k] === RG.VOLCANO) { const vd = Math.hypot(X - w.volcano.x, Z - w.volcano.z); if (w.lava && w.lava[k]) col = hr < 0.15 ? shadeCol(H2('#ffd040'), 0.95) : hr < 0.3 ? shadeCol(H2('#ff5a00'), 0.9 + hr * 0.3) : hr < 0.55 ? shadeCol(H2('#c22a00'), 0.9) : hr < 0.65 ? shadeCol(H2('#ff8a2a'), 0.85) : shadeCol(H2('#2a2628'), 0.9 + hr * 0.2); else if (vd < 10) col = shadeCol(H2('#ff6a1a'), 0.9 + hr * 0.3); else if (vd < 14) col = hr < 0.4 ? shadeCol(H2('#3a2320'), 0.9) : shadeCol(H2('#ff8a2a'), 0.8); else if (hr < 0.08) col = shadeCol(H2('#ff8a2a'), 0.8); else if (hr > 0.92) col = shadeCol(H2('#4a4448'), 0.95); else col = shadeCol(H2('#2a2628'), 0.9 + hr * 0.2); } // v0.19: lava crater + basalt, not grey stone; v0.21: lava flows (molten orange with cooling dark crust), dark crater rim, ash-grey speckle — not one flat black circle
+          buf[o] = col; continue; }
         if (t === T.FARM) { const row = py % 4; col = row === 0 ? PAL.farm[3] : row === 1 ? PAL.farm[2] : PAL.farm[hr < 0.3 ? 0 : 1]; if (px === 0 || px === 15) col = PAL.farm[3]; buf[o] = col; continue; }
         const gf = bil(gv) + (n1 - 0.5) * 0.55 + (n2 - 0.5) * 0.07;
         const sand = bil(sav) + (n1 - 0.5) * 0.3;
-        if (gf > 0.5) { const corr = cr > 0.5, wood = w.region[k] === RG.WOODS, pl = corr ? PAL.cor : wood ? PAL.wood : PAL.grass;
+        if (gf > 0.5) { const corr = cr > 0.5, wood = w.region[k] === RG.WOODS || w.region[k] === RG.JUNGLE, pl = corr ? PAL.cor : wood ? PAL.wood : PAL.grass;
           if (gf < 0.545) col = corr ? PAL.cline : PAL.gline;
           else { const v = vnoise(gx / 10, gy / 10, 7) * 0.8 + vnoise(gx / 4, gy / 4, 8) * 0.2 + (hr - 0.5) * 0.06; col = pl[v < 0.3 ? 4 : v < 0.45 ? 0 : v < 0.66 ? 1 : v < 0.8 ? 2 : 3]; if (gf < 0.58) col = pl[3]; }
         } else if (sand > 0.5) { const v = n2 + (hr - 0.5) * 0.3; col = PAL.sand[v < 0.3 ? 3 : v < 0.62 ? 0 : v < 0.85 ? 1 : 2]; if (((gy + (gx >> 3)) % 9 === 0) && hr < 0.6) col = PAL.sand[3]; }
+        else if (w.region[k] === RG.MARSH) { const v = vnoise(gx / 6, gy / 6, 13) + (hr - 0.5) * 0.12; col = hr < 0.08 ? H2('#6a9a3a') : hr < 0.18 ? H2('#7a9a4a') : v < 0.3 ? H2('#2a4a22') : v < 0.55 ? H2('#3a4a2a') : v < 0.8 ? H2('#4a5a3a') : H2('#7a6a2a'); } // v0.21 swamp: murky mud, green pools, mist, reeds — not brown dirt
         else { const corr = cr > 0.82; if (corr) col = PAL.cor[hr < 0.2 ? 4 : hr < 0.7 ? 1 : 2]; else { const v = vnoise(gx / 6, gy / 6, 13) + (hr - 0.5) * 0.12; col = PAL.dirt[v < 0.25 ? 3 : v < 0.6 ? 0 : v < 0.85 ? 1 : 2];
           // stippled cobble patches (reference look)
           if (vnoise(gx / 40, gy / 40, 11) > 0.6) { const cxl = gx % 5, cyl = gy % 4, ch = hash(gx / 5 | 0, gy / 4 | 0, 12); if (ch < 0.55) { if (cyl === 3 && cxl < 4) col = PAL.dirt[4]; else if (cyl < 3 && cxl < 4) col = cyl === 0 ? PAL.dirt[2] : PAL.dirt[1]; } } } }
@@ -129,12 +152,12 @@ export class Renderer {
         else if (rg === RG.WOODS && h1 < 0.47) { R(ax, ay, 2, 1, '#c86a2a'); R(ax + 3, ay + 2, 1, 1, '#a0522a'); R(ax + 5, ay, 2, 1, '#d8a040'); }
       } else if (t === T.DIRT && !stacked) {
         if (corr) { if (h1 < 0.22) g.drawImage(this.S('bram' + (Z % 4), () => A.bramble(Z % 4)), ox + 1, oy + 2); else if (h1 < 0.3) { R(ax, ay, 2, 1, '#e8e4dc'); R(ax + 1, ay + 1, 1, 1, '#9a96a0'); } }
-        else if (h1 < 0.07) { R(ax, ay, 3, 2, '#d8cfc0'); R(ax, ay + 2, 3, 1, '#8a7a6a'); R(ax, ay, 1, 1, '#fff'); }
+        else if (h1 < 0.07) { if (rg === RG.MARSH) { R(ax, ay, 3, 2, '#5a4a2a'); R(ax, ay + 2, 3, 1, '#3a4a2a'); R(ax, ay, 1, 1, '#7a9a4a'); } else { R(ax, ay, 3, 2, '#d8cfc0'); R(ax, ay + 2, 3, 1, '#8a7a6a'); R(ax, ay, 1, 1, '#fff'); } } // v0.27: no white squares in the swamp — marsh dirt patches are mud/moss, not pale/white
         else if (h1 < 0.12) { R(ax, ay, 2, 1, '#c98444'); R(ax + 3, ay + 1, 1, 1, '#c98444'); }
       } else if (t === T.SAND && !stacked) {
         if (h1 < 0.05) { R(ax, ay, 3, 2, '#f8f0e0'); R(ax + 1, ay + 1, 1, 1, '#e89a8a'); } else if (rg === RG.COAST && h1 < 0.11) { R(ax, ay, 1, 3, '#a8b860'); R(ax + 2, ay - 1, 1, 4, '#8a9a48'); R(ax + 4, ay + 1, 1, 2, '#a8b860'); }
       } else if (t === T.WATER && rg !== RG.SEA && w.ground[k] >= WATER - 3 && tt[tget(X + 1, Z)] === T.WATER && tt[tget(X - 1, Z)] === T.WATER && tt[tget(X, Z + 1)] === T.WATER && tt[tget(X, Z - 1)] === T.WATER) {
-        if (h1 < (rg === RG.LAKE || rg === RG.MARSH ? 0.12 : 0.04)) { const lx = ox + 3 + (h2 * 6 | 0), ly = oy + 3 + (h3 * 6 | 0); g.fillStyle = '#2e6a2a'; g.beginPath(); g.ellipse(lx + 3.5, ly + 3, 4, 3, 0, 0, 6.283); g.fill(); g.fillStyle = '#5aa83a'; g.beginPath(); g.ellipse(lx + 3.5, ly + 2.6, 3.4, 2.4, 0, 0.5, 6.0); g.lineTo(lx + 3.5, ly + 2.6); g.fill(); R(lx + 2, ly + 1, 2, 1, '#8ad050'); if (h2 < 0.3) { R(lx + 4, ly + 1, 2, 2, '#ffa0c8'); R(lx + 4, ly + 1, 1, 1, '#fff'); } }
+        if (h1 < (rg === RG.LAKE || rg === RG.MARSH ? 0.12 : 0.04)) { const lx = ox + 3 + (h2 * 6 | 0), ly = oy + 3 + (h3 * 6 | 0); g.fillStyle = '#2e6a2a'; g.beginPath(); g.ellipse(lx + 3.5, ly + 3, 4, 3, 0, 0, 6.283); g.fill(); g.fillStyle = '#5aa83a'; g.beginPath(); g.ellipse(lx + 3.5, ly + 2.6, 3.4, 2.4, 0, 0.5, 6.0); g.lineTo(lx + 3.5, ly + 2.6); g.fill(); R(lx + 2, ly + 1, 2, 1, '#8ad050'); if (h2 < 0.3) { R(lx + 4, ly + 1, 2, 2, '#ffa0c8'); R(lx + 4, ly + 1, 1, 1, rg === RG.MARSH ? '#7a9a4a' : '#fff'); } } // v0.28: no white in the swamp, even on reed flowers — snow region untouched
         else if (h1 > 0.985) g.drawImage(this.S('wrock', () => A.rocks(3)), ox - 6, oy - 4);
       }
       if (t === T.FARM || w.get(X, w.ground[k], Z) >= B.CROP0 && w.get(X, w.ground[k], Z) <= B.CROP3) { const b = w.get(X, w.ground[k], Z); if (b >= B.CROP0 && b <= B.CROP3) g.drawImage(this.S('crop' + (b - B.CROP0), () => A.crop(b - B.CROP0)), ox, oy - 2); }
@@ -157,7 +180,7 @@ export class Renderer {
       if (tile === T.BRICK || x >= M.px0 && x <= M.px1 && z >= M.pz0 && z <= M.pz1) { continue; }
       const h = hash(x, z, 31), haunted = this.cor[k] > 0.5;
       if (b === B.LOG) { let leaf = 0; for (let y = g + 1; y < g + 9; y++) { const q = w.get(x, y, z); if (q === B.LEAVES) { leaf = 1; break; } if (q === B.NUTLEAF) { leaf = 2; break; } }
-        if (leaf) out.push({ t: 'tree', x: x + 0.5, z: z + 0.85, v: (h * 6) | 0, nut: leaf === 2 }); else if (haunted || w.get(x, g + 3, z) === B.LOG) out.push({ t: 'dead', x: x + 0.5, z: z + 0.85, v: (h * 5) | 0 }); else out.push({ t: 'logs', x: x + 0.5, z: z + 0.8 }); continue; }
+        if (leaf) out.push({ t: 'tree', x: x + 0.5, z: z + 0.85, v: (h * 6) | 0, nut: leaf === 2, palm: w.region[k] === RG.JUNGLE }); else if (haunted || w.get(x, g + 3, z) === B.LOG) out.push({ t: 'dead', x: x + 0.5, z: z + 0.85, v: (h * 5) | 0 }); else out.push({ t: 'logs', x: x + 0.5, z: z + 0.8 }); continue; }
       if (b === B.BERRY) { out.push({ t: 'bush', x: x + 0.5, z: z + 0.8, berry: true }); continue; }
       if (b === B.BUSH) { out.push({ t: 'bush', x: x + 0.5, z: z + 0.8, berry: false }); continue; }
       if (b === B.NUTLEAF) { out.push({ t: 'nuts', x: x + 0.5, z: z + 0.7 }); continue; }
@@ -185,10 +208,41 @@ export class Renderer {
   overview() { if (this.ov && !this.ovDirty) return this.ov; const c = this.ov || cv(W, D), g = c.getContext('2d'), img = g.createImageData(W, D), b = new Uint32Array(img.data.buffer);
     for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const k = z * W + x, t = this.tt[k], cr = this.cor[k] > 0.55; let col;
       if (t === T.WATER) { const d = clamp((this.w.region[k] === RG.SEA ? 2.5 : 0) + (WATER - this.w.ground[k]) * 0.45, 0, 4); const q = WATERC[Math.round(d)]; col = rgb(q[0], q[1], q[2]); }
-      else if (t === T.BRICK || t === T.BRIDGE) col = PAL.brick[1]; else if (t === T.STONE) col = PAL.stone[1]; else if (t === T.SAND) col = PAL.sand[0]; else if (t === T.FARM) col = PAL.farm[1];
-      else if (t === T.GRASS && this.gs[k] + (vnoise(x / 2, z / 2, 1) - 0.5) * 0.5 > 0.5) col = cr ? PAL.cor[1] : this.w.region[k] === RG.WOODS ? PAL.wood[1] : PAL.grass[1]; else col = cr ? PAL.cor[2] : PAL.dirt[1];
+      else if (t === T.BRICK || t === T.BRIDGE) col = PAL.brick[1]; else if (t === T.STONE) col = this.w.region[k] === RG.VOLCANO ? (this.w.lava && this.w.lava[k] ? shadeCol(H2('#ff5a00'), 0.95) : Math.hypot(x - this.w.volcano.x, z - this.w.volcano.z) < 10 ? shadeCol(H2('#ff6a1a'), 0.95) : shadeCol(H2('#2a2628'), 0.95)) : (this.w.snow && Math.hypot(x - this.w.snow.x, z - this.w.snow.z) < this.w.snow.R * 0.9) ? shadeCol(H2(hash(x, z, 32) < 0.5 ? '#e8eef2' : '#c8d0d8'), 0.95) : (x > W / 2 && this.w.region[k] === RG.HIGH) ? shadeCol(H2(hash(x, z, 33) < 0.33 ? '#c9b77a' : hash(x, z, 33) < 0.66 ? '#b8a06a' : '#a08a5a'), 0.95) : this.w.ground[k] > 32 ? shadeCol(H2('#e8eef2'), 0.95) : shadeCol(PAL.stone[1], 0.85 + Math.min(0.3, Math.max(0, (this.w.ground[k] - 16) * 0.02))); // v0.17: zoomed-out rock also shaded by height, not one flat grey; v0.18: snowy tops; v0.19: volcano; v0.21: lava flows read as orange channels on the zoomed-out map
+      else if (this.w.region[k] === RG.MARSH) col = (() => { const h = hash(x, z, 35); return h < 0.2 ? rgb(42, 74, 58) : h < 0.35 ? rgb(106, 154, 58) : h < 0.5 ? rgb(58, 74, 42) : h < 0.65 ? rgb(74, 90, 58) : rgb(52, 66, 38); })(); // v0.21 reference 2: swamp is murky water / mud / green pools, not tan sand
+      else if (t === T.SAND) col = PAL.sand[0]; else if (t === T.FARM) col = PAL.farm[1];
+      else if (t === T.GRASS && this.gs[k] + (vnoise(x / 2, z / 2, 1) - 0.5) * 0.5 > 0.5) col = (this.M && x >= this.M.px0 && x <= this.M.px1 && z >= this.M.pz0 && z <= this.M.pz1) ? PAL.cor[2] : cr ? PAL.cor[1] : (() => { const OLIVE = [[106, 138, 58], [122, 154, 69], [90, 122, 48], [138, 154, 74]]; const o = OLIVE[Math.floor(hash(x, z, 31) * 4)]; return rgb(o[0], o[1], o[2]); })();
+      else col = cr ? PAL.cor[2] : PAL.dirt[1]; // v0.18: zoomed-out woods get dark tree speckles; v0.19: jungle even darker; v0.21: fixed a bug where this else was inside a comment, so sand/farm/dirt tiles rendered transparent black on the zoomed-out map
       b[k] = col; }
-    g.putImageData(img, 0, 0); this.ov = c; this.ovDirty = false; return c; }
+    g.putImageData(img, 0, 0);
+    // v0.21: zoomed-out zone pictures — still 1px-per-tile pixel art, no smoothing, but each zone now draws as a picture, not a flat colour patch.
+    // Peaks become ridge triangles with snow caps, the volcano becomes a cone with lava flows, forests/jungle become tree-canopy clusters,
+    // swamp becomes reed tufts, haunted ground gets dead-tree dots, ruins get broken wall outlines. All deterministic (hash), so the map is stable.
+    { const w = this.w, px = (x, y, col) => { if (x >= 0 && y >= 0 && x < W && y < D) { g.fillStyle = col; g.fillRect(x | 0, y | 0, 1, 1); } };
+      // tree-canopy clusters in woods and jungle, reed tufts in swamp, dead trees in haunted ground
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const rg = w.region[z * W + x];
+        if (rg === RG.WOODS && hash(x, z, 23) < 0.16) { g.fillStyle = '#2f5a2a'; g.fillRect(x, z, 2, 2); px(x, z - 1, '#4c8030'); px(x + 1, z - 1, '#1e4a22'); } // pine: dark canopy + light top, denser than before
+        else if (rg === RG.JUNGLE && hash(x, z, 24) < 0.18) { g.fillStyle = '#1e4a22'; g.fillRect(x, z, 2, 2); px(x - 1, z, '#3a7a2e'); px(x + 2, z, '#5a9a3a'); } // palm: dark cluster + light fronds
+        else if (rg === RG.MARSH && hash(x, z, 25) < 0.18) { const h = hash(x, z, 36); if (h < 0.3) { px(x, z, '#4a3a22'); px(x, z - 1, '#6a5a3a'); px(x + 1, z - 1, '#8a9a4a'); } else if (h < 0.55) { px(x, z, '#7a6a2a'); px(x, z - 1, '#8a7a3a'); } else if (h < 0.75) { px(x, z, '#7a9a4a'); px(x + 1, z, '#5a7a3a'); } else { px(x, z, '#2a4a22'); px(x, z - 1, '#3a5a2a'); } } // swamp: dead moss trees (brown trunk + moss), reed clumps, mist patches, dark shrubs
+        else if (rg === RG.HAUNT && hash(x, z, 26) < 0.08) { px(x, z, '#1a1220'); px(x, z - 1, '#2a2034'); px(x + 1, z - 1, '#0a0810'); } // dead trees, denser
+        else if (rg === RG.MEADOW && hash(x, z, 37) < 0.08) { px(x, z, '#4c7a28'); px(x + 1, z, '#6a9a3a'); } // grass tufts on meadow, like the reference ground texture
+        else if (rg === RG.HIGH && hash(x, z, 38) < 0.05) { px(x, z, '#5f6470'); } // rock dots on mountain ground
+        else if (rg === RG.LAKE && hash(x, z, 39) < 0.04) { px(x, z, '#7a9a6a'); } // shore reeds around lakes
+      }
+      // mountain ridges: one triangle per peak, plus two smaller flanking peaks, left side dark, right side light, snow on the tallest
+      const tri = (cx, cz, hw, hh, snow, tan) => { for (let dy = 0; dy < hh; dy++) { const half = Math.max(1, Math.round(hw * dy / hh)); for (let dx = -half; dx <= half; dx++) { const left = dx < 0; let col = tan ? (left ? '#a08a5a' : '#c9b77a') : (left ? '#5f6470' : '#a2a8b4'); if (snow && dy < hh * 0.25) col = '#e8eef2'; else if (dy > hh * 0.8) col = tan ? '#8a7a4a' : '#7a7f8c'; px(cx + dx, cz - hh / 2 + dy, col); } } };
+      if (w.peaks) for (const p of w.peaks) { const hw = Math.round(p.R * 0.55), hh = Math.round(p.R * 0.7), tan = p.x > W / 2; tri(p.x, p.z, hw, hh, !!p.snowy, tan); tri(p.x - hw, p.z + 2, Math.round(hw * 0.6), Math.round(hh * 0.6), false, tan); tri(p.x + hw, p.z + 2, Math.round(hw * 0.6), Math.round(hh * 0.6), false, tan); tri(p.x - hw * 0.5, p.z - 3, Math.round(hw * 0.45), Math.round(hh * 0.5), !!p.snowy, tan); tri(p.x + hw * 0.5, p.z - 3, Math.round(hw * 0.45), Math.round(hh * 0.5), false, tan); } // v0.21: ranges are 5-peak masses, not a single triangle, like the reference mountains
+      // volcano: big cone with a flat lava crater, dark rim, and its lava flows as orange channels
+      if (w.volcano) { const vx = Math.round(w.volcano.x), vz = Math.round(w.volcano.z), R = w.volcano.R, hw = Math.round(R * 1.2), hh = Math.round(R * 1.3); for (let dy = 0; dy < hh; dy++) { const half = Math.max(1, Math.round(hw * dy / hh)); for (let dx = -half; dx <= half; dx++) { let col = dx < 0 ? '#2a2628' : '#3a3438'; if (dy > hh * 0.85) col = '#4a4448'; px(vx + dx, vz - hh / 2 + dy, col); } } for (let dx = -6; dx <= 6; dx++) for (let dy = -2; dy <= 2; dy++) px(vx + dx, vz - hh / 2 + dy, '#ff6a1a'); if (w.volcanoFlows) for (const f of w.volcanoFlows) for (let t = R * 0.3; t < R * 1.6; t += 1) { const fx = Math.round(vx + f.ca * t), fz = Math.round(vz + f.sa * t); px(fx, fz, hash(fx, fz, 27) < 0.5 ? '#ff5a00' : '#c22a00'); px(fx, fz + 1, '#7a1a00'); } }
+      // v0.21 reference: villages as thatched houses + tan fields, like the reference island — one cluster per living tribe, drawn in the overview so villages read at island view
+      if (this.sim && this.sim.tribes) for (const tr of this.sim.tribes) { if (!tr.alive) continue; const vx = Math.round(tr.cx), vz = Math.round(tr.cz); g.fillStyle = '#c9b77a'; g.fillRect(vx - 9, vz - 6, 19, 13); g.fillStyle = '#8a7a4a'; g.fillRect(vx - 9, vz, 19, 1); g.fillRect(vx, vz - 6, 1, 13); for (const [hx, hz] of [[-7, -3], [3, -3], [-2, 3]]) { g.fillStyle = '#e8d8a8'; g.fillRect(vx + hx, vz + hz, 4, 3); g.fillStyle = '#7a5a2a'; g.fillRect(vx + hx - 1, vz + hz - 1, 6, 1); g.fillRect(vx + hx + 1, vz + hz - 2, 2, 1); } }
+      // v0.21 reference: haunted centre as a dark castle, not just a purple patch
+      if (this.M) { const mx = this.M.cx, mz = this.M.cz; g.fillStyle = '#1a1220'; g.fillRect(mx - 4, mz - 3, 9, 6); g.fillStyle = '#2a2034'; g.fillRect(mx - 1, mz - 6, 1, 3); g.fillRect(mx - 4, mz - 5, 1, 2); g.fillRect(mx + 4, mz - 5, 1, 2); }
+      // v0.21 reference: sea texture speckle, like the deep blue textured sea in the reference
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) if (w.region[z * W + x] === RG.SEA && hash(x, z, 34) < 0.03) px(x, z, '#2a6a8a');
+      // ruins: broken wall rectangles
+      if (w.decor) for (const d of w.decor) if (d.t === 'ruin') { g.fillStyle = '#6a6258'; g.fillRect(d.x - d.hw, d.z - d.hd, d.hw * 2 + 1, 1); g.fillRect(d.x - d.hw, d.z + d.hd, d.hw * 2 + 1, 1); } }
+    this.ov = c; this.ovDirty = false; return c; }
   // ------------------------------------------------------------------ frame
   render(cam, alpha, dt, sel, dpr) {
     const cvs = this.canvas, ctx = this.ctx, w = this.w, sim = this.sim; this.t += dt; const t = this.t;
@@ -205,10 +259,21 @@ export class Renderer {
     // ground
     const cx0 = clamp(Math.floor(vx0 / CH), 0, NC - 1), cx1 = clamp(Math.floor(vx1 / CH), 0, NC - 1), cz0 = clamp(Math.floor(vz0 / CH), 0, NC - 1), cz1 = clamp(Math.floor(vz1 / CH), 0, NC - 1);
     const far = cam.scale < 5.5; let built = 0;
-    if (far) { ctx.imageSmoothingEnabled = cam.scale < 2.5; ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P); ctx.imageSmoothingEnabled = false; }
+    if (far) { ctx.imageSmoothingEnabled = cam.scale < 2.5; ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P); ctx.imageSmoothingEnabled = false;
+      // v0.22: far zoom = Kyler's image, crossfading to game terrain as you zoom in. Scale <3: full image. Scale 3-5.5: blend image -> overview. Scale >=5.5: game chunks (close view, handled below). This is why far looks beautiful and close looks like the game, without a hard pop.
+      const fullA = cam.scale < 3 ? 1 : cam.scale < 5.5 ? (5.5 - cam.scale) / 2.5 : 0;
+      // v0.25 FIX: v0.24 upscaled the far image to 4608 but still cropped source rect 0,0,512,512 — so far view only ever showed the top-left 11% of the image (deep blue sea), stretched over the whole map. Now it draws the full natural size, with smoothing on for the downscale.
+      if (fullA > 0 && this.refFull && this.refFull.complete && this.refFull.naturalWidth) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.refFull, 0, 0, this.refFull.naturalWidth, this.refFull.naturalHeight, 0, 0, W * P, D * P); ctx.restore(); } }
     else { let missing = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) if (!this.chunks.has(cx + ',' + cz)) missing = true;
       if (missing) ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P);
       const budget = this.forceBuild ? 1e9 : 2; this.forceBuild = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) { const had = this.chunks.has(cx + ',' + cz), c = this.chunk(cx, cz, built < budget); if (c && !had) built++; if (c) ctx.drawImage(c, cx * CP, cz * CP); } }
+    // v0.24 landmarks: photo pictures far/mid only, fading out as you zoom in, so close zoom is clean tile ground, not a stretched photo. Full at scale <=5.5, fade 5.5-12, gone above 12.
+    { const landA = cam.scale <= 5.5 ? 1 : cam.scale < 12 ? (12 - cam.scale) / 6.5 : 0;
+      const refDraw = (im, cx, cz, wTiles) => { if (!im || !im.complete || !im.naturalWidth || landA <= 0) return; const wPx = wTiles * P, hPx = wPx * im.height / im.width; ctx.save(); ctx.globalAlpha = landA; ctx.imageSmoothingEnabled = false; ctx.drawImage(im, Math.round(cx * P - wPx / 2), Math.round(cz * P - hPx / 2), Math.round(wPx), Math.round(hPx)); ctx.restore(); };
+      if (w.volcano) refDraw(this.ref.volcano, w.volcano.x, w.volcano.z, w.volcano.R * 2);
+      if (w.jungle) refDraw(this.ref.jungle, w.jungle.x, w.jungle.z, w.jungle.R * 2);
+      if (w.snow) refDraw(this.ref.snow, w.snow.x, w.snow.z, w.snow.R * 2);
+      if (w.swamp) refDraw(this.ref.swamp, w.swamp.x, w.swamp.z, w.swamp.R * 2); }
     for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) { const kk = cx + ',' + cz; if (!this.objs.has(kk)) this.objs.set(kk, this.buildObjs(cx, cz)); }
     // ---------- gather drawables ----------
     const night = 1 - sim.dayAmt(), lights = [], list = [], glow = []; this.eyes = []; this.hutTags = [];
@@ -238,7 +303,7 @@ export class Renderer {
     const draw = (c, x, z, ax = 0.5, ay = 1, flip = false, alpha2 = 1) => { const X = Math.round(x * P - c.width * ax), Y = Math.round(z * P - c.height * ay); if (alpha2 !== 1) ctx.globalAlpha = alpha2; if (flip) { ctx.save(); ctx.translate(X + c.width, Y); ctx.scale(-1, 1); ctx.drawImage(c, 0, 0); ctx.restore(); } else ctx.drawImage(c, X, Y); if (alpha2 !== 1) ctx.globalAlpha = 1; };
     for (const o of list) {
       switch (o.t) {
-        case 'tree': { const c = this.S('tree' + o.v + o.nut, () => A.tree(o.v, o.nut ? 'nut' : 'oak')); const sway = Math.round(Math.sin(t * 1.3 + o.x * 0.7 + o.z) * 0.6); draw(c, o.x + sway / P, o.z, 0.5, 0.95); break; }
+        case 'tree': { const c = o.palm ? this.S('palm' + o.v, () => A.palm(o.v)) : this.S('tree' + o.v + o.nut, () => A.tree(o.v, o.nut ? 'nut' : 'oak')); const sway = Math.round(Math.sin(t * 1.3 + o.x * 0.7 + o.z) * 0.6); draw(c, o.x + sway / P, o.z, 0.5, 0.95); break; }
         case 'hideout': draw(this.S('hide' + o.h.kind + o.h.v, () => A.hideout(o.h.kind, o.h.v)), o.x, o.z, 0.5, 0.9); break;
         case 'dead': draw(this.S('dead' + o.v, () => A.deadTree(o.v)), o.x, o.z, 0.5, 0.97); break;
         case 'stump': draw(this.S('stump', A.stump), o.x, o.z); break;
@@ -309,14 +374,35 @@ export class Renderer {
       ctx.setTransform(k, 0, 0, k, ox, oy); ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = 0.45 * I; ctx.globalCompositeOperation = 'multiply'; const cp = ctx.createPattern(this.fogTex, 'repeat'); cp.setTransform(new DOMMatrix().scaleSelf(22, 22).translateSelf((t * 1.1) % 96, (t * 0.4) % 96)); ctx.fillStyle = cp; ctx.filter = 'none'; ctx.fillRect(ax0, az0, aw, ah); ctx.restore();
       ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = `rgba(80,90,120,${0.5 * I})`; ctx.fillRect(0, 0, Wd, Hd); ctx.globalCompositeOperation = 'source-over';
       if (!this.rain || this.rain.length < 1) this.rain = Array.from({ length: 420 }, () => ({ x: Math.random(), y: Math.random(), s: 0.6 + Math.random() * 0.6 }));
-      ctx.strokeStyle = `rgba(190,210,240,${0.55 * I})`; ctx.lineWidth = Math.max(1, dpr); ctx.beginPath(); const n2 = Math.floor(this.rain.length * I);
-      for (let i = 0; i < n2; i++) { const r = this.rain[i]; r.y += dt * 1.6 * r.s; r.x -= dt * 0.25 * r.s; if (r.y > 1) { r.y -= 1; r.x = Math.random() * 1.2; } if (r.x < 0) r.x += 1.2; const X = r.x * Wd, Y = r.y * Hd; ctx.moveTo(X, Y); ctx.lineTo(X - 5 * dpr, Y + 16 * dpr * r.s); } ctx.stroke();
+      // v0.19 per-biome precipitation: a rain streak's world position decides what it is.
+      // Snow peak = snowflakes (never rain), volcano = ash/embers, jungle = heavier rain,
+      // swamp = mist, everywhere else = rain. This is the "it doesn't rain in the snow" fix.
+      const wv = this.w, snowD = (wx, wz) => Math.hypot(wx - wv.snow.x, wz - wv.snow.z), volcD = (wx, wz) => Math.hypot(wx - wv.volcano.x, wz - wv.volcano.z);
+      ctx.lineWidth = Math.max(1, dpr); const n2 = Math.floor(this.rain.length * I);
+      for (let i = 0; i < n2; i++) { const r = this.rain[i]; const spd = r.s; r.y += dt * (1.6 * spd); r.x -= dt * 0.25 * spd; if (r.y > 1) { r.y -= 1; r.x = Math.random() * 1.2; } if (r.x < 0) r.x += 1.2; const X = r.x * Wd, Y = r.y * Hd;
+        const wx = cam.tx + (X - Wd / 2) / s, wz = cam.tz + (Y - Hd / 2) / s;
+        if (snowD(wx, wz) < 40 && wv.ground[clamp(wz | 0, 0, D - 1) * W + clamp(wx | 0, 0, W - 1)] > 25) { ctx.fillStyle = `rgba(255,255,255,${0.8 * I})`; ctx.fillRect(X, Y, 2 * dpr, 2 * dpr); } // snow, not rain
+        else if (volcD(wx, wz) < 45) { ctx.fillStyle = sim.volcanoErupt && hash(i, 7, 1) < 0.3 ? `rgba(255,120,30,${0.9 * I})` : `rgba(120,110,110,${0.7 * I})`; ctx.fillRect(X, Y, 2 * dpr, 2 * dpr); } // ash, embers when erupting
+        else if (Math.hypot(wx - wv.jungle.x, wz - wv.jungle.z) < wv.jungle.R) { ctx.strokeStyle = `rgba(190,210,240,${0.75 * I})`; ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(X - 5 * dpr, Y + 22 * dpr * spd); ctx.stroke(); } // jungle downpour
+        else if (wv.region[clamp(wz | 0, 0, D - 1) * W + clamp(wx | 0, 0, W - 1)] === RG.MARSH) { /* swamp: mist, not streaks — drawn below */ }
+        else { ctx.strokeStyle = `rgba(190,210,240,${0.55 * I})`; ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(X - 5 * dpr, Y + 16 * dpr * spd); ctx.stroke(); } }
       for (let i = 0; i < 8 * I; i++) { const X = Math.random() * Wd, Y = Math.random() * Hd; ctx.fillStyle = 'rgba(200,220,255,.5)'; ctx.fillRect(X, Y, 3 * dpr, dpr); }
       this.flashT = (this.flashT ?? 3) - dt; if (this.flashT < 0) { this.flash = 1; this.flashT = 3 + Math.random() * 6 / I; this.bolt = { x: Math.random() * Wd, seed: Math.random() * 1000 }; }
       if (this.flash > 0.02) { ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(170,190,255,${0.55 * this.flash * I})`; ctx.fillRect(0, 0, Wd, Hd); ctx.globalCompositeOperation = 'source-over';
         if (this.flash > 0.6) { ctx.strokeStyle = '#eef4ff'; ctx.lineWidth = 2 * dpr; ctx.beginPath(); let X = this.bolt.x, Y = 0; ctx.moveTo(X, Y); for (let j = 1; j < 12; j++) { X += (hash(j, this.bolt.seed, 1) - 0.5) * 70 * dpr; Y += Hd / 22; ctx.lineTo(X, Y); } ctx.stroke(); }
         this.flash *= Math.pow(0.02, dt); if (this.flash < 0.5 && this.flash > 0.4 && Math.random() < 0.3) this.flash = 0.9; } }
     else this.flash = 0;
+    // ---------- v0.19 ambient weather: volcano smoke always, snow over the peak always,
+    // swamp mist over BlackCardU Swamp always, eruption glow/embers at night ----------
+    { const wv = this.w, VX = ox + wv.volcano.x * s, VY = oy + wv.volcano.z * s, SX = ox + wv.snow.x * s, SY = oy + wv.snow.z * s;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      // volcano smoke plume, rising and drifting
+      for (let i = 0; i < (sim.volcanoErupt ? 14 : 6); i++) { const ph = (t * 0.25 + i / 6) % 1, Rr = (12 + i * 6 + ph * 40) * (s / 16) * dpr, a = sim.volcanoErupt ? 0.5 - ph * 0.3 : 0.3 - ph * 0.2; ctx.fillStyle = `rgba(60,55,60,${Math.max(0, a)})`; ctx.beginPath(); ctx.arc(VX + Math.sin(t + i) * 8 * dpr + ph * 20 * dpr, VY - ph * 60 * dpr, Math.max(2, Rr), 0, 6.283); ctx.fill(); }
+      if (sim.volcanoErupt) { ctx.fillStyle = 'rgba(255,110,20,0.5)'; ctx.beginPath(); ctx.arc(VX, VY, (10 + Math.sin(t * 6) * 3) * (s / 16) * dpr, 0, 6.283); ctx.fill(); for (let i = 0; i < 12; i++) { const a = hash(i, (t | 0) % 10, 5) * 6.283, dd = hash(i, 3, 6) * 30 * (s / 16) * dpr; ctx.fillStyle = 'rgba(255,150,40,0.9)'; ctx.fillRect(VX + Math.cos(a) * dd, VY + Math.sin(a) * dd, 2 * dpr, 2 * dpr); } }
+      // snowflakes over the snowy peak, even when it is not storming
+      if (SX > -100 && SX < Wd + 100 && SY > -100 && SY < Hd + 100) { ctx.fillStyle = 'rgba(255,255,255,0.85)'; for (let i = 0; i < 40; i++) { const fx = SX + ((hash(i, 11, 1) * 80 - 40 + t * 6 * (i % 3 - 1)) % 80) * (s / 16) * dpr, fy = SY + ((hash(i, 12, 1) * 80 - 40 + t * 10 * (0.5 + hash(i, 13, 1) * 0.5)) % 80) * (s / 16) * dpr; ctx.fillRect(fx, fy, 2 * dpr, 2 * dpr); } }
+      // swamp mist: drifting translucent patches over marsh tiles in view
+      ctx.fillStyle = 'rgba(220,230,220,0.08)'; for (let i = 0; i < 6; i++) { const mx = (t * 8 * (i % 2 ? 1 : -1) + i * 200) % (Wd + 200) - 100, my = Hd * (0.2 + i * 0.13); ctx.beginPath(); ctx.ellipse(mx, my, 120 * dpr, 18 * dpr, 0, 0, 6.283); ctx.fill(); } }
     // ---------- overlay: selection, labels ----------
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     for (const e of sim.ents) if (e.held && e.alive && e.rx !== undefined) { // v0.12 grab highlight: ground shadow + pulsing glow ring
@@ -332,7 +418,7 @@ export class Renderer {
   label(ctx, text, x, y, size, col) { ctx.font = `600 ${size}px "Pixelify Sans", monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = Math.max(3, size / 4); ctx.strokeStyle = '#1a100a'; ctx.strokeText(text, x, y); ctx.fillStyle = col; ctx.fillText(text, x, y); }
   regionLabels(ctx, ox, oy, s, dpr, cam) {
     if (cam.scale > 26) return; const w = this.w, size = clamp(s * 2.4, 13 * dpr, 30 * dpr), seen = new Set();
-    const items = w.regionSeeds.map(r => [r.x, r.z, REGION_NAMES[w.region[clamp(Math.round(r.z), 0, D - 1) * W + clamp(Math.round(r.x), 0, W - 1)]]]); items.push([this.M.cx, this.M.cz - 14, REGION_NAMES[RG.HAUNT]]); if (cam.scale > 5) items.push([this.M.cx, this.M.cz - 9, '83 Kingsway']);
+    const items = w.regionSeeds.map(r => [r.x, r.z, REGION_NAMES[w.region[clamp(Math.round(r.z), 0, D - 1) * W + clamp(Math.round(r.x), 0, W - 1)]]]); items.push([this.M.cx, this.M.cz - 14, REGION_NAMES[RG.HAUNT]]); if (cam.scale > 5) items.push([this.M.cx, this.M.cz - 9, '83 Kingsway']); if (w.volcano) items.push([w.volcano.x, w.volcano.z - 8, REGION_NAMES[RG.VOLCANO]]); if (w.jungle) items.push([w.jungle.x, w.jungle.z, REGION_NAMES[RG.JUNGLE]]); if (w.snow) items.push([w.snow.x, w.snow.z - 8, 'Walk of Shame']);
     const cs = [[0.5, 0.12], [0.88, 0.5], [0.5, 0.88], [0.12, 0.5]]; for (const [a, b] of cs) items.push([W * a, D * b, REGION_NAMES[RG.COAST]]);
     ctx.font = `${size}px "Jacquard 12", "Pixelify Sans", serif`;
     for (const [x, z, n] of items) { if (n === REGION_NAMES[RG.SEA]) continue; const X = ox + x * s, Y = oy + z * s; if (X < -200 || Y < -50 || X > ctx.canvas.width + 200 || Y > ctx.canvas.height + 50) continue; if (seen.has(n + Math.round(x / 120))) continue; seen.add(n + Math.round(x / 120));
@@ -401,10 +487,10 @@ export class Renderer {
     else if (k === 'islet') draw(this.S('tent', tentArt), o.x, o.z);
   }
   drawThr(ctx, o, draw, t, sel, glow, lights, night) {
-    // Ian's original sprite for every Thronglet (no variation), procedural motion: squash/stretch hop, leg swing, ear wobble, flip, sleep tilt, fear shake
+    // v0.15: 8-directional idle sprite when loaded, else the old single sprite (sliced Ian, whole guard). Procedural hop/squash/sleep/fear still apply.
     const e = o.e, moving = Math.hypot(e.x - e.px, e.z - e.pz) > 0.01, fear = e.fear > 55 && e.state !== 'sleep';
     const sleep = !e.alive || e.state === 'sleep' || (e.state === 'hiding' && !fear);
-    const TH = 20, k = this.view.s / P, im = this.pick('thronglet', TH * k); if (!im) return;
+    const TH = 20, k = this.view.s / P, isGuard = e.guardOf != null && e.alive, dirIm = this.pickDir(isGuard ? 'guard' : 'thronglet', e, TH * k), im = dirIm || this.pick(isGuard ? 'guard' : 'thronglet', TH * k); if (!im) return;
     const iw = im.width, ih = im.height, TW = TH * iw / ih, ph = (e.walk || 0) * 5 * Math.PI / 2 + e.id;
     let x = o.x * P, y = (e.rz + 0.35) * P + 1.5; if (fear) x += Math.sin(t * 70 + e.id) * 0.7;
     const hid = !!e.hidden, alpha = !e.alive ? 0.5 : hid ? 0.6 : 1;
@@ -413,14 +499,17 @@ export class Renderer {
     if (sleep) { } else if (moving) { const sp = Math.sin(ph); hop = Math.abs(sp) * 1; sy = 1 + 0.07 * Math.cos(ph * 2); legL = Math.max(0, sp) * 1.6; legR = Math.max(0, -sp) * 1.6; earA = 1.3; }
     else { sy = 1 + 0.025 * Math.sin(t * 3 + e.id); if (e.state === 'social' || e.state === 'share') hop = Math.max(0, Math.sin(t * 7 + e.id)) * 0.8; }
     if (fear) { sy = 0.93; earA = 0.5; }
-    const sx = 1 / Math.sqrt(sy), flip = Math.sin(e.dir) < 0 ? -1 : 1;
+    const sx = 1 / Math.sqrt(sy), flip = dirIm ? 1 : (Math.sin(e.dir) < 0 ? -1 : 1);
     ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y - hop);
     if (sleep) { ctx.translate(0, -2); ctx.rotate(-1.35); ctx.translate(TH * 0.42, 0); }
     ctx.scale(flip * sx, sy);
+    if (dirIm || isGuard) { ctx.drawImage(im, -TW / 2, -TH, TW, TH); } else {
     const E = 0.30, Lg = 0.86, d = (sf0, sf1, dy = 0, dx = 0, x0 = 0, x1 = 1) => ctx.drawImage(im, iw * x0, ih * sf0, iw * (x1 - x0), ih * (sf1 - sf0), -TW / 2 + TW * x0 + dx, -TH + TH * sf0 + dy, TW * (x1 - x0), TH * (sf1 - sf0) + 0.02);
     d(E, Lg); d(Lg, 1, -legL, 0, 0, 0.5); d(Lg, 1, -legR, 0, 0.5, 1);
     const N = 4; for (let i = 0; i < N; i++) { const f0 = E * i / N, f1 = E * (i + 1) / N, tip = 1 - (i + 0.5) / N; d(f0, f1 + 0.003, 0, Math.sin(t * 6 + e.id * 1.3 + i * 0.3) * earA * tip * tip); }
+    }
     ctx.restore();
+    // v0.14: guard sprite already wears helm + sword, so no drawn guardGear on top
     let rk = null; for (const kk in e.inv) if (e.inv[kk] > 0 && (!rk || e.inv[kk] > e.inv[rk])) rk = kk;
     if (rk && e.alive && !sleep) { const ic = this.S('it_' + rk, () => A.item(rk)); ctx.drawImage(ic, x + flip * TW * 0.55 - 3, y - hop - TH * 0.42 - 3, 6, 6); }
     if (!e.alive || this.view.s < 10 * this.view.dpr) return;
@@ -430,9 +519,9 @@ export class Renderer {
     if (ic) draw(this.S('bub' + ic, () => A.bubble(ic)), (x + 7) / P, (y - hop - TH - 1) / P + Math.sin(t * 3 + e.id) * 0.04, 0.5, 1);
   }
   drawPeng(ctx, o, draw, t, night) {
-    // Kyler's penguin sprite for every penguin (identical, no variation): side-to-side waddle tilt + tiny step bounce
-    const e = o.e, moving = Math.hypot(e.x - e.px, e.z - e.pz) > 0.01, PH = 18, k = this.view.s / P, im = this.pick('penguin', PH * k); if (!im) return;
-    const PW = PH * im.width / im.height, flip = Math.sin(e.dir) < 0 ? -1 : 1 /* penguin art: walking left mirrors (original behaviour) */, ph = (e.walk || 0) * 6 + e.id;
+    // v0.15: 8-directional idle penguin when loaded, else the old single penguin sprite. Waddle tilt + step bounce still apply.
+    const e = o.e, moving = Math.hypot(e.x - e.px, e.z - e.pz) > 0.01, PH = 18, k = this.view.s / P, dirIm = this.pickDir('penguin', e, PH * k), im = dirIm || this.pick('penguin', PH * k); if (!im) return;
+    const PW = PH * im.width / im.height, flip = dirIm ? 1 : (Math.sin(e.dir) < 0 ? -1 : 1), ph = (e.walk || 0) * 6 + e.id;
     const x = o.x * P, y = (e.rz + 0.35) * P + 1.5, rot = moving ? Math.sin(ph) * 0.13 : Math.sin(t * 1.6 + e.id) * 0.03, hop = moving ? Math.abs(Math.cos(ph)) * 0.7 : 0;
     const st0 = e.state; ctx.save(); ctx.translate(x, y - hop); if (st0 === 'sliding') { ctx.translate(0, -PW * 0.45); ctx.rotate(flip * 1.45); ctx.translate(0, PH * 0.5); } else if (st0 === 'napping') { ctx.translate(0, -2); ctx.rotate(-1.3); ctx.translate(PH * 0.42, 0); } else ctx.rotate(rot); ctx.scale(flip, 1); ctx.drawImage(im, -PW / 2, -PH, PW, PH); ctx.restore();
     if (this.view.s < 10 * this.view.dpr) return;
@@ -441,8 +530,9 @@ export class Renderer {
   }
   drawTum(ctx, o, draw, t, night, sim) {
     // Ian Tumnus (unique): Kyler's faun art cut out + pixel-quantised; proud strut = bob + slight sway
-    const e = o.e, moving = Math.hypot(e.x - e.px, e.z - e.pz) > 0.01, VH = 23, k = this.view.s / P, im = this.pick('tumnus', VH * k); if (!im) return;
-    const VW = VH * im.width / im.height, flip = Math.sin(e.dir) < 0 ? 1 : -1 /* Tumnus art faces left natively */, ph = (e.walk || 0) * 4.5 + e.id, x = o.x * P, y = (e.rz + 0.3) * P + 1.5;
+    // v0.20: 8-directional Pixel Lab idle, like the other characters; falls back to the old single sprite.
+    const e = o.e, moving = Math.hypot(e.x - e.px, e.z - e.pz) > 0.01, VH = 23, k = this.view.s / P, dirIm = this.pickDir('tumnus', e, VH * k), im = dirIm || this.pick('tumnus', VH * k); if (!im) return;
+    const VW = VH * im.width / im.height, flip = dirIm ? 1 : (Math.sin(e.dir) < 0 ? 1 : -1) /* old Tumnus art faces left natively; directional art faces its direction */, ph = (e.walk || 0) * 4.5 + e.id, x = o.x * P, y = (e.rz + 0.3) * P + 1.5;
     const bob = moving ? Math.abs(Math.sin(ph)) * 0.9 : 0, rot = moving ? Math.sin(ph) * 0.04 : 0;
     ctx.save(); ctx.translate(x, y - bob); ctx.rotate(rot); ctx.scale(flip, 1 + (moving ? 0.015 * Math.cos(ph * 2) : 0.01 * Math.sin(t * 2))); ctx.drawImage(im, -VW / 2, -VH, VW, VH); ctx.restore();
     if (this.view.s < 10 * this.view.dpr) return; const st = e.state || ''; const ic = st === 'pitching' ? (Math.floor(t * 1.5) % 2 ? 'book' : 'talk') : (e.fireAt && sim.tick - e.fireAt < 150) ? 'anger' : (e.snitchAt && sim.tick - e.snitchAt < 40) ? '!' : null;
@@ -457,6 +547,9 @@ export class Renderer {
       if (Math.floor(t * 0.7 + e.id) % 5) { ctx.fillStyle = '#ff3030'; const X = Math.round(o.x * P) + (e.id % 3) * 2 - 2, Y = Math.round((e.rz - 0.35) * P); ctx.fillRect(X - 2, Y, 1, 1); ctx.fillRect(X + 1, Y, 1, 1); glow.push([o.x, e.rz - 0.35, 0.5, 'red']); }
       if (this.view.s >= 10 * this.view.dpr) draw(this.S('bubz', () => A.bubble('z')), o.x + 0.6, e.rz - 1.2 + Math.sin(t * 2) * 0.05, 0.5, 1); return; }
     if (e.batHome || e.raidFly) { const by = e.rz - 1.6 + Math.sin(t * 6 + e.id) * 0.12;
+      // v0.20: 8-directional Pixel Lab bat (red eyes) for bat-form flight; falls back to the flap sheet, then code-drawn.
+      const batDir = this.pickDir('bat', e, 34 * this.view.dpr);
+      if (batDir) { const bw = 34, bh = bw * batDir.height / batDir.width; ctx.save(); ctx.imageSmoothingEnabled = false; ctx.translate(Math.round(o.x * P), Math.round(by * P)); ctx.drawImage(batDir, -Math.round(bw / 2), -Math.round(bh / 2), bw, Math.round(bh)); ctx.restore(); glow.push([o.x, by, 0.6, 'red']); return; }
       if (BAT_SPRITE && !this.batImg) { this.batImg = new Image(); this.batImg.src = BAT_SPRITE; }
       if (this.batImg && this.batImg.complete && this.batImg.naturalWidth) { // 2-frame flap, crisp nearest-neighbour
         const im = this.batImg, fw = im.naturalWidth / 2, fh = im.naturalHeight, f = Math.floor(t * 8 + e.id) % 2, bw = 34, bh = bw * fh / fw, flip = Math.sin(e.dir) < 0 ? -1 : 1;
@@ -464,12 +557,14 @@ export class Renderer {
       else { const f = Math.floor(t * 12 + e.id) % 4; draw(this.S('bigbat' + f, () => A.bigBat(f)), o.x, by, 0.5, 0.5); }
       glow.push([o.x, by, 0.6, 'red']); return; }
     if (e.bat) { for (let i = 0; i < 7; i++) { const a = t * 5 + i * 0.9 + e.id, r = 0.4 + (i % 3) * 0.3; draw(this.S('bat' + ((Math.floor(t * 10) + i) % 2), () => A.bat((Math.floor(t * 10) + i) % 2)), o.x + Math.cos(a) * r, e.rz - 1 + Math.sin(a * 1.3) * r * 0.6, 0.5, 0.5); } glow.push([o.x, e.rz - 1, 1.2, 'red']); return; }
-    const VH = 22, k = this.view.s / P, im = this.pick('stefan', VH * k); if (!im) return;
-    const iw = im.width, ih = im.height, VW = VH * iw / ih, flip = Math.sin(e.dir) < 0 ? -1 : 1;
+    const VH = 22, k = this.view.s / P, dirIm = this.pickDir('vampire', e, VH * k), im = dirIm || this.pick('stefan', VH * k); if (!im) return;
+    const iw = im.width, ih = im.height, VW = VH * iw / ih, flip = dirIm ? 1 : (Math.sin(e.dir) < 0 ? -1 : 1);
     const bob = 0, x = o.x * P, y = (e.rz + 0.3) * P + 1.5, amp = moving ? 2.2 : 0.8;
     ctx.save(); ctx.translate(x, y); ctx.scale(flip, 1 + 0.02 * Math.sin(t * 2.4 + e.id));
+    if (dirIm) { ctx.drawImage(im, -VW / 2, -VH, VW, VH); } else {
     const N = 14; for (let i = 0; i < N; i++) { const f0 = i / N, f1 = (i + 1) / N, f = (f0 + f1) / 2, w = f > 0.3 ? Math.pow((f - 0.3) / 0.7, 1.6) : 0, off = Math.sin(t * 3.2 - f * 5 + e.id) * amp * w - (moving ? amp * 0.8 * w : 0);
       ctx.drawImage(im, 0, ih * f0, iw, ih * (f1 - f0) + 1, -VW / 2 + off, -VH + VH * f0, VW, VH * (f1 - f0) + 0.05); }
+    }
     ctx.restore();
     if (night > 0.3) { for (const ex of [0.455, 0.51]) { const gx = x + (ex - 0.5) * VW * flip; glow.push([gx / P, (y - VH * 0.88) / P, 0.13, 'red']); } lights.push([o.x, e.rz, 1.2, 'red', 0.12]); this.eyes.push([x, y - VH * 0.88, VW, flip]); }
     if (e.alert && this.sim && this.sim.tick - e.alert < 40 && this.view.s >= 10 * this.view.dpr) draw(this.S('bub!', () => A.bubble('!')), (x + 8) / P, (y - VH - 1) / P, 0.5, 1);

@@ -41,6 +41,14 @@ export function tree(v, kind = 'oak') {
   else for (let i = 0; i < 9; i++) { const x = 12 + r(30 + i) * 24 | 0, y = 10 + r(40 + i) * 22 | 0; R(g, x, y, 1, 1, pal[5]); }
   return outline(c, '#1a2410');
 }
+export function palm(v) { // v0.19: free in-code jungle palm, same outlined pixel style as tree()
+  const c = cv(48, 60), g = c.getContext('2d');
+  for (let y = 28; y < 56; y++) { const x = 24 + Math.round(Math.sin((y - 28) / 28 * 1.2) * 3); R(g, x - 2, y, 4, 1, '#6b4224'); R(g, x + 1, y, 1, 1, '#8a5a32'); }
+  const frond = (a, len, col) => { for (let i = 0; i < len; i++) { const x = Math.round(24 + Math.cos(a) * i * 1.6), y = Math.round(28 + Math.sin(a) * i * 1.2 + i * i * 0.08); R(g, x, y, 2, 1, col); R(g, x, y + 1, 1, 1, col); } };
+  const cols = ['#2e6b2a', '#3f8a32', '#5aa83a', '#7cc44a'];
+  for (let i = 0; i < 8; i++) frond(-Math.PI / 2 + (i - 3.5) * 0.45, 14, cols[i % 4]);
+  R(g, 22, 26, 5, 3, '#8a5a2a'); return outline(c, '#1a2410');
+}
 export function deadTree(v) {
   const c = cv(48, 64), g = c.getContext('2d'), rr = a => hash(v, a, 77);
   const C = ['#3a1d14', '#6a3422', '#8a4a2e', '#a8623c'];
@@ -190,6 +198,18 @@ export function thronglet(color, pose, f) {
   if (pose === 'walk') { const sw = [0, 1, 0, -1][f % 4]; R(g, 2, by + sw, 2, 2, FUR[1]); R(g, 14, by - sw, 2, 2, FUR[1]); } else if (pose !== 'sleep') { R(g, 2, by + 1, 2, 2, FUR[1]); R(g, 14, by + 1, 2, 2, FUR[1]); }
   if (pose !== 'sleep') R(g, 15, by + 4, 2, 1, FUR[0]);
   return outline(c, '#3a2a2a');
+}
+// v0.13: guard gear — steel helm with a red plume, spear and shield, drawn over Ian's thronglet sprite
+// so a guard reads at a glance. (x, y) = sprite centre-bottom in art px, w/h = sprite size, flip = facing.
+export function guardGear(g, x, y, w, h, flip) {
+  const R2 = (xx, yy, ww, hh, c) => { g.fillStyle = c; g.fillRect(xx, yy, ww, hh); };
+  const hx = Math.round(x - 4), hy = Math.round(y - h + 1);
+  R2(hx, hy, 8, 3, '#8d93a3'); R2(hx, hy, 8, 1, '#d8dde6'); R2(hx, hy + 3, 8, 1, '#5d6270'); // steel helm
+  R2(hx + 3, hy - 2, 2, 2, '#c8203c'); // red plume
+  const sx = Math.round(x + flip * (w / 2 + 1)); // spear, on the facing side
+  R2(sx - 1, y - h - 4, 2, h + 3, '#6b4224'); R2(sx - 1, y - h - 6, 2, 3, '#c8cdd8'); R2(sx - 2, y - h - 6, 4, 1, '#eef2f6');
+  const qx = Math.round(x - flip * (w / 2 + 2)); // shield, on the other side
+  R2(qx - 2, y - h + 7, 4, 6, '#7a4a2a'); R2(qx - 2, y - h + 7, 4, 1, '#a87444'); R2(qx - 1, y - h + 9, 2, 2, '#c9d4e0');
 }
 export function vampire(f, stefan, moving) {
   const c = cv(22, 30), g = c.getContext('2d'); const fl = moving ? f % 2 : 0;

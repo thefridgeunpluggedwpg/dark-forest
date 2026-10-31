@@ -41,6 +41,9 @@ export const PenguinMixin = {
     e.exile = true; e.exReason = 'fired'; e.exRep = 0; e.asked = new Set(); e.refusedAll = false; e.exiledDay = this.day; e.exTribe = null; e.tribe = null; e.home = null; e.noRehire = this.day + this.FIRE_EVERY; (this.pstats.firedEnts = this.pstats.firedEnts || []).push(e); e.fear = 30; e.hp = Math.min(e.hp, 80);
     this.log(`${e.name} pulled off the penguin suit and is an ordinary Thronglet again — an outcast who must find a tribe to take them in, or hide.`, 'exile'); },
   giveOrders(night) { const T = this.tumnus; if (!T || !T.alive) return; if (!night && this.day % this.FIRE_EVERY === 0) this.firePenguin(T); const ps = this.penguins(); if (!ps.length) return;
+    // v0.19: no converts yesterday = walk of shame this morning (not for new hires,
+    // and not twice in a row — a penguin who was on shame yesterday is exempt today).
+    if (!night && this.day > 1) for (const p of ps) { if (p.shame || p.lastShameDay >= this.day - 1 || p.convDay >= this.day - 1) continue; if (this.tick - (p.hired || 0) < 1200) continue; const s = this.w.snow; p.shame = { x: s.x, z: s.z, t: 0 }; p.lastShameDay = this.day; this.log(`Ian Tumnus sent ${p.name} on the WALK OF SHAME to the snowy peak — no converts yesterday.`, 'vamp'); }
     const full = ps.length >= BEDROOMS, trs = this.tribes.filter(t => t.alive && t.members.size).map(t => [t, this.tribeNeed(t)]).sort((a, b) => b[1] - a[1]).map(x => x[0]);
     const parts = []; ps.forEach((p, i) => { const tr = (p.stay && p.stay.alive && p.stay.members.size >= 3) ? p.stay : trs[i % Math.max(1, Math.min(trs.length, night ? trs.length : 2 + (i >> 2)))]; if (!tr) return; if (!night) { if (p.stay !== tr) p.inLogged = 0; p.stay = tr; } const where = night ? this.w.regionAt(tr.cx + this.rnd(-20, 20), tr.cz + this.rnd(-20, 20)).replace(/^the /, '') : tr.name;
       const dbl = night && p.order && p.order.double; p.order = { tr, night, double: dbl, scoutOnly: !night && full, label: dbl ? 'double scouting (punishment)' : night ? 'stay overnight in ' + tr.name : (full ? 'scout ' : 'recruit in ') + tr.name }; parts.push(`${p.name} to ${tr.name}`); });
@@ -52,11 +55,11 @@ export const PenguinMixin = {
     if (pv < 0.27 && t >= 0.27) this.giveOrders(false); if (pv < 0.8 && t >= 0.8) this.giveOrders(true);
     if (pv < 0.6 && t >= 0.6 && this.recruitDue()) this.closeDeal();
     const day = !this.isNight() && t > 0.27 && t < 0.64, pdk = this.day;
-    // personally pitch to exiles / refused outcasts with his parcel
+    // personally pitch to exiles / outcasts who wander onto the grounds — Tumnus never leaves 83 Kingsway (v0.13)
     if (day && !T.pitch && T.convDay !== pdk && this.bedsTaken() < BEDROOMS && ((this.pstats.perDay[pdk] || 0) < 2 && this.penguins().length < this.convCap() || this.recruitDue())) {
-      let best = null, bd = 90; for (const e of this.ents) if (e.kind === 't' && e.alive && !e.inHut && !e.bcu && !e.hidden && (e.exile || e.tribe == null) && e.tPitchDay !== pdk && !(e.noRehire > pdk)) { const d = dist(e.x, e.z, T.x, T.z); if (d < bd) { bd = d; best = e; } }
+      let best = null, bd = 14; for (const e of this.ents) if (e.kind === 't' && e.alive && !e.inHut && !e.bcu && !e.hidden && (e.exile || e.tribe == null) && e.tPitchDay !== pdk && !(e.noRehire > pdk)) { const d = dist(e.x, e.z, T.x, T.z); if (d < bd) { bd = d; best = e; } }
       if (best) { best.tPitchDay = pdk; T.pitch = { e: best, t: 0, walk: 0 }; } }
-    if (T.pitch) { const P = T.pitch, e = P.e; if (!e.alive || e.inHut || e.bcu || !day) { T.pitch = null; return; }
+    if (T.pitch) { const P = T.pitch, e = P.e; if (!e.alive || e.inHut || e.bcu || !day || dist(e.x, e.z, m.x, m.z) > 14) { T.pitch = null; return; }
       if (dist(T.x, T.z, e.x, e.z) > 1.5) { T.state = 'walking to ' + e.name; if (++P.walk > 1200) T.pitch = null; else this.moveTo(T, e.x, e.z, 0.24, 1.2); return; }
       T.state = 'pitching'; T.dir = Math.atan2(e.x - T.x, e.z - T.z); if (P.t === 0) { e.act = { type: 'listen', p: T, t: 60 }; this.pstats.pitches++; } if (++P.t < 60) return; T.pitch = null;
       if (this.recruitDue() || this.r() < Math.min(0.75, this.pitchChance(e) + 0.3)) { this.noteConv('m'); T.conv++; T.convDay = pdk; this.pstats.tConv++; this.pstats.conversions++; this.pstats.perDay[pdk] = (this.pstats.perDay[pdk] || 0) + 1;
@@ -68,17 +71,20 @@ export const PenguinMixin = {
       if (this.isNight() && !(T.cool > this.tick)) for (const e of this.ents) { if (e.kind !== 't' || !e.alive || e.inHut || e.bcu || this.safeAt(e.x, e.z) || dist(e.x, e.z, T.x, T.z) > 11) continue; if (e.hidden && this.r() > (1 - e.hidden.conceal) * 0.3) continue;
         const v = this.vamps().filter(v => v.hp > 45 && v.state !== 'retreat').sort((a, b) => dist(a.x, a.z, e.x, e.z) - dist(b.x, b.z, e.x, e.z))[0]; if (!v) break; v.assign = { type: 'hunt', e, fx: 0, fz: 0 }; e.spottedAt = this.tick; T.cool = this.tick + 300; T.snitches = (T.snitches || 0) + 1; T.snitchAt = this.tick; this.pstats.snitchSpots++; v.alert = this.tick;
         this.log(`Ian Tumnus spotted ${e.exile ? 'exile ' : ''}${e.name}${this.ofV(e)} ${this.placeName(e.x, e.z)} on his rounds and snitched to ${v.name}.`, 'vamp'); break; } }
-    // inspection trip into the field (after every 2 parade loops)
-    if (T.insp) { const p = T.insp.p; if (!p.alive || ++T.insp.t > 1100 || dist(p.x, p.z, m.x, m.z) < 10) { T.insp = null; } else { T.state = 'inspecting ' + p.name; if (this.moveTo(T, p.x + 1, p.z, 0.26, 2) || dist(T.x, T.z, p.x, p.z) < 2.5) { if ((T.vt = (T.vt || 0) + 1) > 50) { T.vt = 0; T.insp = null; } } return; } }
-    // default: parade the 83 Kingsway grounds in a loop (gardens, gate, perimeter)
+    // default: parade the 83 Kingsway grounds in a loop (gardens, gate, perimeter) — and inspect remotely from it
     const WP = [[0, 9], [8, 7], [11, 0], [8, -8], [0, -11], [-8, -8], [-11, 0], [-8, 7]]; T.state = 'parading the grounds';
     const wp = WP[(T.wp || 0) % WP.length]; if (this.moveTo(T, m.x + wp[0], m.z + wp[1], 0.17, 1.4) || ++T.wpt > 400) { T.wpt = 0; T.wp = (T.wp || 0) + 1; if (T.wp % WP.length === 0) { T.laps = (T.laps || 0) + 1;
-      if (T.laps % 2 === 0) { const ps = this.penguins().filter(p => dist(p.x, p.z, m.x, m.z) > 12 && dist(p.x, p.z, m.x, m.z) < 90); if (ps.length) { T.insp = { p: ps[T.laps / 2 % ps.length | 0], t: 0 }; } } } } },
-  catchSlacker(T, p) { const what = p.slack.kind; p.slack = null; T.snitchAt = this.tick; T.caught = (T.caught || 0) + 1; this.pstats.caught++; p.alert = this.tick; p.caughtCount = (p.caughtCount || 0) + 1;
+      if (T.laps % 2 === 0) this.remoteInspect(T); } } },
+  // v0.13: Tumnus never leaves the grounds. His inspections are remote and randomized — from the parade loop he
+  // checks one random penguin anywhere on the map, and only sometimes catches a slacker (60% when he looks).
+  remoteInspect(T) { const ps = this.penguins(); if (!ps.length) return; const p = ps[(this.r() * ps.length) | 0]; T.state = 'inspecting ' + p.name + ' from the grounds'; T.inspectAt = this.tick;
+    if (p.slack && this.r() < 0.6) this.catchSlacker(T, p, true); },
+  catchSlacker(T, p, remote = false) { const what = p.slack.kind; p.slack = null; T.snitchAt = this.tick; T.caught = (T.caught || 0) + 1; this.pstats.caught++; p.alert = this.tick; p.caughtCount = (p.caughtCount || 0) + 1;
     const v = this.vamps().find(v => v.name === 'Stefan') || this.vamps()[0]; if (v) v.alert = this.tick; const who = v ? v.name : 'the vampires';
-    const pun = this.r() < 0.5 ? 'summon' : 'double';
+    const pun = this.r() < 0.34 ? 'shame' : this.r() < 0.5 ? 'summon' : 'double';
+    if (pun === 'shame') { const s = this.w.snow; p.shame = { x: s.x, z: s.z, t: 0 }; p.lastShameDay = this.day; this.log(`${remote ? `From the grounds, Ian Tumnus's inspection caught ${p.name} ${what} ${this.placeName(p.x, p.z)}` : `Ian Tumnus caught ${p.name} ${what} ${this.placeName(p.x, p.z)}`} and snitched to ${who}. ${who} sent ${p.name} on the WALK OF SHAME to the snowy peak.`, 'vamp'); return; }
     if (pun === 'summon') { p.summon = { w: 0 }; } else { p.order = { ...(p.order || {}), night: true, double: true, tr: (p.order && p.order.tr) || this.tribes.find(t => t.alive), label: 'double scouting (punishment)' }; p.noSlack = this.tick + 3 * 1200; }
-    this.log(`Ian Tumnus caught ${p.name} ${what} ${this.placeName(p.x, p.z)} and snitched to ${who}. ${pun === 'summon' ? `${p.name} was summoned to 83 Kingsway for a scolding and loses tomorrow's outing.` : `${who} ordered ${p.name} to do double scouting tonight.`}`, 'vamp'); },
+    this.log(`${remote ? `From the grounds, Ian Tumnus's inspection caught ${p.name} ${what} ${this.placeName(p.x, p.z)}` : `Ian Tumnus caught ${p.name} ${what} ${this.placeName(p.x, p.z)}`} and snitched to ${who}. ${pun === 'summon' ? `${p.name} was summoned to 83 Kingsway for a scolding and loses tomorrow's outing.` : `${who} ordered ${p.name} to do double scouting tonight.`}`, 'vamp'); },
   nearT(p) { const T = this.tumnus; return T && T.alive && dist(T.x, T.z, p.x, p.z) < 8; },
   convCap() { return Math.min(BEDROOMS, Math.max(3, Math.floor(this.thronglets().length * 0.2))); },
   pitchChance(e) { // well-fed, respected members mostly refuse; exiles, outcasts, hungry, disliked or frightened ones are easier
@@ -88,6 +94,11 @@ export const PenguinMixin = {
   updateP(p) {
     const m = this.w.mansion, t = this.tod, night = this.isNight(), day = !night && t > 0.27 && t < 0.64;
     if (p.fired) return this.firedWalk(p);
+    // v0.19: walk of shame — a punished penguin waddles, slowly, all the way to the
+    // snowy peak, stands there a moment, then waddles back. State text shows it, and
+    // the chronicle logs the arrival and the return.
+    if (p.shame) { const S = p.shame; if (!S.arrived) { p.state = 'walk of shame to the snowy peak'; if (this.moveTo(p, S.x, S.z, 0.18, 1.5) || ++S.t > 2400) { S.arrived = this.tick; this.log(`${p.name} reached the snowy peak, head down, for the walk of shame.`, 'vamp'); } return; }
+      if (this.tick - S.arrived > 120) { p.state = 'returning from the walk of shame'; if (this.moveTo(p, m.x, m.z + 3, 0.22, 1.5) || ++S.t > 4800) { p.shame = null; this.log(`${p.name} waddled back from the walk of shame, thoroughly embarrassed.`, 'vamp'); } } else p.state = 'standing in shame at the snowy peak'; return; }
     if (p.cool > 0) p.cool--; if (night && p.order && p.order.double) p.cool = Math.max(0, p.cool - 1);
     if (p.scare > 0) { p.scare--; p.state = 'returning'; this.moveTo(p, m.x, m.z + 3, 0.28, 2); return; }
     if (p.summon) { p.state = p.summon.at ? 'scolded' : 'summoned'; p.pitch = null; if (!p.summon.at) { if (this.moveTo(p, m.x, m.z + 3, 0.3, 1.5) || dist(p.x, p.z, m.x, m.z + 3) < 2.5 || ++p.summon.w > 900) p.summon.at = this.tick; } else if (this.tick - p.summon.at > 90) { p.grounded = this.day + (t > 0.5 ? 1 : 0); p.noSlack = this.tick + 3 * 1200; p.summon = null; } return; }
