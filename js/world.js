@@ -746,8 +746,8 @@ export class World {
         else if (bv === 9 || bv === 12) { best = RG.VOLCANO; h = 18 + Math.min(bd, 22) * 0.9 + n3(x * 0.08, z * 0.08, 3) * 3; if (bv === 12) this.lava[k] = 1; }
         else if (bv === 5 || bv === 11) { best = RG.HIGH; h = 20 + Math.min(bd, 14) * (bv === 11 ? 1.5 : 1.15) + n3(x * 0.07, z * 0.07, 3) * 3; h = bv === 11 ? Math.max(h, 33) : Math.min(h, 31.4); } // grey peaks stay under the snow line (render paints h>32 white)
         else if (bv === 10) best = RG.JUNGLE;
-        else if (bv === 13) { best = RG.MARSH; h = WATER - 1; }
-        else if (bv === 4) { best = RG.MARSH; h = WATER + 0.6 + (n3(x * 0.05, z * 0.05, 3) - 0.45) * 5; }
+        else if (bv === 13) { best = RG.MARSH; h = WATER + 0.3; } /* v0.13.10: swamp pools are boggy land, matching the painting (Kyler: no fake ponds) */
+        else if (bv === 4) { best = RG.MARSH; h = Math.max(WATER + 0.3, WATER + 0.6 + (n3(x * 0.05, z * 0.05, 3) - 0.45) * 5); }
         else if (Math.hypot(x - ruinsC.x, z - ruinsC.z) + (n3(x * 0.05, z * 0.05, 2) - 0.5) * 32 < 28) best = RG.RUINS;
         else best = bv === 3 ? RG.WOODS : RG.MEADOW; }
       if (best === RG.MEADOW) h = 14 + (h - 14) * 0.5;

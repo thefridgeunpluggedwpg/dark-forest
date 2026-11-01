@@ -1,5 +1,6 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+- **v0.13.11**: fake swamp ponds removed across the map; close-up now matches the zoomed-out painting (swamp is boggy land, real lakes stay water).
 - **v0.13.10**: realistic ocean (textured deep teal with soft drifting waves, lighter shallows round the island); zoomed-out sea now matches the water outside the map, no dark navy box or hard edge.
 ## v0.13.9
 - New app icon: the 83 Kingsway mansion at night with bats, a crescent moon, swirling fog and twisted purple trees (icons/icon-v3-*). Cache dark-forest-v41.
