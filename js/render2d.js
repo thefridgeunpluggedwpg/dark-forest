@@ -18,6 +18,7 @@ const PAL = {
   sand: ['#ecd194', '#f3dca2', '#f8e8bc', '#dcbc7e'].map(H2),
   grass: ['#5f9e2e', '#73b53a', '#86c443', '#9ad24e', '#4c8a28'].map(H2), gline: H2('#3f7424'),
   wood: ['#3a6a2a', '#4c8030', '#5d9238', '#6ea43f', '#335e26'].map(H2),
+  lawn: ['#3e5634', '#48623a', '#536d40', '#5f7848', '#33472d'].map(H2), // v0.13.6 overgrown mansion lawn: muted dark green, sits between forest and haunted purple
   cor: ['#33283f', '#3d2f4c', '#4a395c', '#56436a', '#2a2034'].map(H2), cline: H2('#1f1828'),
   stone: ['#7a7f8c', '#8d93a0', '#a2a8b4', '#5f6470'].map(H2), sline: H2('#4a4e58'),
   brick: ['#5d6478', '#6b7286', '#7b8296', '#474c5f'].map(H2),
@@ -51,7 +52,7 @@ export class Renderer {
     const m = world.mansion, mx = Math.floor(m.x), mz = Math.floor(m.z); this.M = { cx: mx, cz: mz, x0: mx - 8, x1: mx + 8, z0: mz - 6, z1: mz + 6 };
     const M = this.M; M.px0 = M.x0 - 2; M.px1 = M.x1 + 2; M.pz0 = M.z0 - 2; M.pz1 = M.z1 + 4;
     // per-tile classification
-    const n = W * D; this.tt = new Uint8Array(n); this.gs = new Float32Array(n); this.cor = new Float32Array(n);
+    const n = W * D; this.tt = new Uint8Array(n); this.gs = new Float32Array(n); this.cor = new Float32Array(n); this.lawn = new Float32Array(n);
     for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) this.classify(x, z);
     // haunted scatter + village props
     this.decor = [];
@@ -65,6 +66,11 @@ export class Renderer {
     this.decor.push({ t: 'kingslamp', x: mx + 4.4, z: M.pz1 + 1.6 }); this.decor.push({ t: 'yard', x: mx + 3.2, z: M.pz1 + 2.4 }); for (let i = 0; i < 10; i++) this.decor.push({ t: 'lav', x: mx + 0.5 + (i < 5 ? -1 : 1) * (5.6 + (i % 5) * 0.9), z: M.z1 + 2.4 + hash(i, 5, 5) * 0.8, v: i }); this.decor.push({ t: 'pumpkin', x: mx - 6.5, z: M.z1 + 3.3, v: 1 });
     for (let x = M.px0 - 4; x <= M.px1 + 4; x++) { if (Math.abs(x + 0.5 - (mx)) < 3) continue; this.decor.push({ t: 'fence', x: x + 0.5, z: M.pz1 + 5 }); }
     for (let x = M.px0 - 4; x <= M.px1 + 4; x++) this.decor.push({ t: 'fence', x: x + 0.5, z: M.pz0 - 4 });
+    // v0.13.6 estate garden + BlackCard University entrance sign (render-only props, no collision, clear of the path/lamps)
+    this.decor.push({ t: 'bcsign', x: mx - 5.2, z: M.pz1 + 7.6 });
+    this.decor.push({ t: 'fountain', x: mx + 11.2, z: M.z1 + 5.2 }); this.decor.push({ t: 'fbed', x: mx - 10.8, z: M.z1 + 6.6, v: 0 }); this.decor.push({ t: 'fbed', x: mx + 8.6, z: M.z1 + 7.6, v: 1 });
+    for (const sd of [-1, 1]) for (let i = 0; i < 4; i++) this.decor.push({ t: 'hedge', x: mx + 0.5 + sd * (4.4 + i * 1.9), z: M.pz1 + 3.9 });
+    this.bcImg = new Image(); this.bcImg.onload = () => this.spr.delete('bcsign0'); this.bcImg.src = 'assets/sprites/blackcard_crest_60.png';
     for (const d of world.decor) if (d.t === 'dock') this.decor.push({ t: 'dockpost', x: d.x + 0.2, z: d.z + 1 });
     this.mansionArt = null; this.dirtyAll = true;
   }
@@ -79,7 +85,7 @@ export class Renderer {
     else if (w.region[k] === RG.MARSH) t = T.DIRT; // v0.21: swamp ground is murky dirt in close-up, not beach sand — the murky palette is in bake()
     else if (sb === B.SAND) t = T.SAND; else if (sb === B.STONE || sb === B.COBBLE || sb === B.MOSS) t = T.STONE; else if (sb === B.FARM) t = T.FARM;
     else if (sb === B.GRASS) { t = T.GRASS; const rg = w.region[k]; gs = 0.3 + 0.8 * vnoise(x / 7, z / 7, 5) + (rg === RG.WOODS ? 0.3 : rg === RG.MEADOW ? 0.1 : 0); for (const tr of this.sim.tribes) { const d = Math.hypot(x - tr.cx, z - tr.cz); if (d < 4) gs -= (4 - d) * 0.25; } }
-    const inLawn = x >= M.px0 - 3 && x <= M.px1 + 3 && z >= M.pz0 - 3 && z <= M.pz1 + 3; if (inLawn && t === T.GRASS) gs = 1.2; this.tt[k] = t; this.gs[k] = gs; const dm = Math.hypot(x - M.cx, z - M.cz); this.cor[k] = inLawn ? 0 : clamp((44 - dm) / 14 + (vnoise(x / 6, z / 6, 9) - 0.5) * 0.9, 0, 1);
+    /* v0.13.6: lawn is an organic noise-warped blob that fades into the haunted ground, not a hard rectangle */ const ex = (x + 0.5 - M.cx) / 20, ez = (z + 0.5 - M.cz - 2.5) / 15.5, e = Math.hypot(ex, ez) + (vnoise(x / 4, z / 4, 71) - 0.5) * 0.45 + (vnoise(x / 1.7, z / 1.7, 72) - 0.5) * 0.12, lf = clamp((1.12 - e) / 0.22, 0, 1), inLawn = lf > 0.5; this.lawn[k] = lf; if (lf > 0.3 && t === T.GRASS) gs = Math.max(gs, 0.6 + 0.6 * lf); this.tt[k] = t; this.gs[k] = gs; const dm = Math.hypot(x - M.cx, z - M.cz); this.cor[k] = clamp((44 - dm) / 14 + (vnoise(x / 6, z / 6, 9) - 0.5) * 0.9, 0, 1) * (1 - lf) * (1 - lf);
   }
   // ------------------------------------------------------------------ ground chunk baking
   bake(cx, cz) {
@@ -110,7 +116,7 @@ export class Renderer {
           buf[o] = (200 << 24) | (Math.round(lerp(c0[2], c1[2], tt2)) << 16) | (Math.round(lerp(c0[1], c1[1], tt2)) << 8) | Math.round(lerp(c0[0], c1[0], tt2)); continue; }
         if (wf > 0.41 && t !== T.SAND && bil(sav) < 0.5) { buf[o] = PAL.bank[wf > 0.46 ? 1 : 0]; continue; }
         const sf = bil(sv) + (n1 - 0.5) * 0.3;
-        const cr = cor[k] + (n2 - 0.5) * 0.2;
+        const cr = bil(q => cor[q]) + (n2 - 0.5) * 0.2 + (hr - 0.5) * 0.12, lw = bil(q => this.lawn[q]);
         if (sf > 0.5) { const row = gy >> 2, cell = hash((gx + (row & 1) * 3) >> 3, row, 6); const m = (gy & 3) === 0 || (((gx + (row & 1) * 3) & 7) === 0);
           col = sf < 0.56 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; const hb = bil(q => w.ground[q]) + (vnoise(gx / 9, gy / 9, 60) - 0.5) * 1.6, snowy = hb > 32.5; if (sf >= 0.56 && !snowy && w.region[k] !== RG.VOLCANO) col = rockPix(gx, gy, h < 20 ? 1 : 0, true); /* v0.13.2: grey rock tinted toward the painted far map */ /* v0.13.1: natural stone on grey mountain rock only */ if (cr > 0.6 && hr < 0.3) col = PAL.cor[2];
           // v0.17 rock relief: the stone branch used to return one flat grey pattern.
@@ -127,7 +133,7 @@ export class Renderer {
         if (t === T.FARM) { const row = py % 4; col = row === 0 ? PAL.farm[3] : row === 1 ? PAL.farm[2] : PAL.farm[hr < 0.3 ? 0 : 1]; if (px === 0 || px === 15) col = PAL.farm[3]; buf[o] = col; continue; }
         const gf = bil(gv) + (n1 - 0.5) * 0.55 + (n2 - 0.5) * 0.07;
         const sand = bil(sav) + (n1 - 0.5) * 0.3;
-        if (gf > 0.5) { const corr = cr > 0.5, wood = w.region[k] === RG.WOODS || w.region[k] === RG.JUNGLE, pl = corr ? PAL.cor : wood ? PAL.wood : PAL.grass;
+        if (gf > 0.5) { const corr = cr > 0.5, wood = w.region[k] === RG.WOODS || w.region[k] === RG.JUNGLE, pl = corr ? PAL.cor : lw + (hr - 0.5) * 0.3 > 0.25 ? PAL.lawn : wood ? PAL.wood : PAL.grass;
           if (gf < 0.545) col = corr ? PAL.cline : PAL.gline;
           else { const v = vnoise(gx / 10, gy / 10, 7) * 0.8 + vnoise(gx / 4, gy / 4, 8) * 0.2 + (hr - 0.5) * 0.06; col = pl[v < 0.3 ? 4 : v < 0.45 ? 0 : v < 0.66 ? 1 : v < 0.8 ? 2 : 3]; if (gf < 0.58) col = pl[3]; }
         } else if (sand > 0.5) { const v = n2 + (hr - 0.5) * 0.3; col = PAL.sand[v < 0.3 ? 3 : v < 0.62 ? 0 : v < 0.85 ? 1 : 2]; if (((gy + (gx >> 3)) % 9 === 0) && hr < 0.6) col = PAL.sand[3]; }
@@ -213,7 +219,7 @@ export class Renderer {
       else if (t === T.BRICK || t === T.BRIDGE) col = PAL.brick[1]; else if (t === T.STONE) col = this.w.region[k] === RG.VOLCANO ? (this.w.lava && this.w.lava[k] ? shadeCol(H2('#ff5a00'), 0.95) : Math.hypot(x - this.w.volcano.x, z - this.w.volcano.z) < 10 ? shadeCol(H2('#ff6a1a'), 0.95) : shadeCol(H2('#2a2628'), 0.95)) : (this.w.snow && Math.hypot(x - this.w.snow.x, z - this.w.snow.z) < this.w.snow.R * 0.9) ? shadeCol(H2(hash(x, z, 32) < 0.5 ? '#e8eef2' : '#c8d0d8'), 0.95) : (x > W / 2 && this.w.region[k] === RG.HIGH) ? shadeCol(H2(hash(x, z, 33) < 0.33 ? '#c9b77a' : hash(x, z, 33) < 0.66 ? '#b8a06a' : '#a08a5a'), 0.95) : this.w.ground[k] > 32 ? shadeCol(H2('#e8eef2'), 0.95) : shadeCol(PAL.stone[1], 0.85 + Math.min(0.3, Math.max(0, (this.w.ground[k] - 16) * 0.02))); // v0.17: zoomed-out rock also shaded by height, not one flat grey; v0.18: snowy tops; v0.19: volcano; v0.21: lava flows read as orange channels on the zoomed-out map
       else if (this.w.region[k] === RG.MARSH) col = (() => { const h = hash(x, z, 35); return h < 0.2 ? rgb(42, 74, 58) : h < 0.35 ? rgb(106, 154, 58) : h < 0.5 ? rgb(58, 74, 42) : h < 0.65 ? rgb(74, 90, 58) : rgb(52, 66, 38); })(); // v0.21 reference 2: swamp is murky water / mud / green pools, not tan sand
       else if (t === T.SAND) col = PAL.sand[0]; else if (t === T.FARM) col = PAL.farm[1];
-      else if (t === T.GRASS && this.gs[k] + (vnoise(x / 2, z / 2, 1) - 0.5) * 0.5 > 0.5) col = (this.M && x >= this.M.px0 && x <= this.M.px1 && z >= this.M.pz0 && z <= this.M.pz1) ? PAL.cor[2] : cr ? PAL.cor[1] : (() => { const OLIVE = [[106, 138, 58], [122, 154, 69], [90, 122, 48], [138, 154, 74]]; const o = OLIVE[Math.floor(hash(x, z, 31) * 4)]; return rgb(o[0], o[1], o[2]); })();
+      else if (t === T.GRASS && this.gs[k] + (vnoise(x / 2, z / 2, 1) - 0.5) * 0.5 > 0.5) col = this.lawn[k] > 0.3 ? PAL.lawn[hash(x, z, 33) < 0.5 ? 1 : 2] : cr ? PAL.cor[1] : (() => { const OLIVE = [[106, 138, 58], [122, 154, 69], [90, 122, 48], [138, 154, 74]]; const o = OLIVE[Math.floor(hash(x, z, 31) * 4)]; return rgb(o[0], o[1], o[2]); })();
       else col = cr ? PAL.cor[2] : PAL.dirt[1]; // v0.18: zoomed-out woods get dark tree speckles; v0.19: jungle even darker; v0.21: fixed a bug where this else was inside a comment, so sand/farm/dirt tiles rendered transparent black on the zoomed-out map
       b[k] = col; }
     g.putImageData(img, 0, 0);
@@ -341,6 +347,10 @@ export class Renderer {
         case 'topiary': draw(this.S('topi' + (o.v % 4), () => K.topiary(o.v % 4)), o.x, o.z); break;
         case 'kingslamp': draw(this.S('klamp' + lit, () => K.kingsLamp(lit)), o.x, o.z); if (lit) { lights.push([o.x, o.z - 3.2, 6, 'warm', 0.95]); glow.push([o.x, o.z - 3.3, 1.1, 'warm']); } break;
         case 'yard': draw(this.S('yard', K.yardSign), o.x, o.z); break;
+        case 'bcsign': { const ok = this.bcImg && this.bcImg.complete && this.bcImg.naturalWidth > 0; draw(this.S('bcsign' + (ok ? 1 : 0), () => bcSign(ok ? this.bcImg : null)), o.x, o.z); if (lit) { lights.push([o.x, o.z - 3.2, 5, 'warm', 0.7]); glow.push([o.x - 2.4, o.z - 6.3, 0.6, 'warm'], [o.x + 1.9, o.z - 6.2, 0.6, 'warm']); } break; }
+        case 'fountain': draw(this.S('fount', fountainArt), o.x, o.z); break;
+        case 'fbed': draw(this.S('fbed' + o.v, () => flowerBed(o.v)), o.x, o.z); break;
+        case 'hedge': draw(this.S('hedge', hedgeArt), o.x, o.z); break;
         case 'lav': draw(this.S('lav' + (o.v % 4), () => K.lavender(o.v % 4)), o.x, o.z); break;
         case 'skull': draw(this.S('skull', A.skull), o.x, o.z); break;
         case 'pillar': draw(this.S('pillar', A.pillar), o.x, o.z); break;
@@ -675,3 +685,23 @@ function snowPix(gx, gy, hb) {
   const sh = 1 - l; // shadows go blue-grey
   return rgb(clamp(238 * l + 40 * sh, 0, 255) | 0, clamp(244 * l + 52 * sh, 0, 255) | 0, clamp(250 * l + 78 * sh + 10, 0, 255) | 0);
 }
+
+// v0.13.6: BlackCard University entrance monument, estate garden props (pre-rendered once, cached via S())
+function bcSign(img) { const c = cv(64, 72), g = c.getContext('2d'), Rr = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  for (const px of [2, 54]) { Rr(px, 14, 8, 56, '#3a3842'); Rr(px + 1, 14, 2, 56, '#5a5866'); Rr(px + 6, 14, 2, 56, '#2a2830'); for (let y = 22; y < 68; y += 9) Rr(px, y, 8, 1, '#2a2830'); Rr(px - 1, 10, 10, 4, '#4a4854'); Rr(px - 1, 10, 10, 1, '#6a6876'); Rr(px + 2, 4, 4, 6, '#16181c'); Rr(px + 3, 5, 2, 4, '#ffd780'); Rr(px + 1, 3, 6, 1, '#16181c'); Rr(px - 2, 66, 12, 4, '#2a2830'); }
+  Rr(10, 22, 44, 44, '#2c2a34'); Rr(11, 23, 42, 42, '#3c3a46'); Rr(11, 23, 42, 1, '#5a5866'); Rr(10, 64, 44, 6, '#2a2830'); Rr(8, 18, 48, 4, '#4a4854'); Rr(8, 18, 48, 1, '#6a6876'); Rr(12, 66, 40, 1, '#4a4854');
+  for (let i = 0; i < 9; i++) { const h = hash(i, 7, 77); Rr(4 + i * 7, 69 - (h * 3 | 0), 2, 3, '#3a5a2c'); } // grass tufts at the base
+  const o = A.outline(c, '#101014'), c2 = cv(96, 108), g2 = c2.getContext('2d'); g2.imageSmoothingEnabled = false; g2.drawImage(o, 0, 0, 96, 108); // stone at 1.5x, crest drawn at its own resolution
+  if (img) g2.drawImage(img, 18, 36); else { g2.fillStyle = '#101014'; g2.fillRect(30, 40, 36, 40); }
+  return c2; }
+function fountainArt() { const c = cv(40, 30), g = c.getContext('2d'), Rr = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  g.fillStyle = '#5a5a62'; g.beginPath(); g.ellipse(20, 22, 18, 7, 0, 0, 6.283); g.fill(); g.fillStyle = '#7a7a84'; g.beginPath(); g.ellipse(20, 21, 18, 6, 0, 0, 6.283); g.fill(); g.fillStyle = '#3a3a2c'; g.beginPath(); g.ellipse(20, 21, 14, 4, 0, 0, 6.283); g.fill();
+  Rr(12, 20, 5, 2, '#4a3a22'); Rr(24, 21, 6, 1, '#5a4a2a'); Rr(17, 22, 3, 1, '#4a5a2a'); Rr(18, 6, 4, 15, '#6a6a74'); Rr(18, 6, 1, 15, '#8a8a94'); Rr(14, 4, 12, 3, '#7a7a84'); Rr(15, 3, 10, 1, '#8a8a94'); Rr(19, 0, 2, 4, '#6a6a74'); Rr(8, 22, 2, 2, '#3a5a2c'); Rr(29, 18, 2, 3, '#3a5a2c'); Rr(26, 25, 3, 1, '#4a4a52');
+  return A.outline ? A.outline(c, '#15151c') : c; }
+function flowerBed(v) { const c = cv(40, 16), g = c.getContext('2d'), Rr = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  Rr(1, 4, 38, 11, '#5a5a62'); Rr(2, 5, 36, 9, '#3a2a1e'); Rr(1, 4, 38, 1, '#7a7a84'); const cols = v ? ['#9a6aaa', '#c890d0', '#e0c0e8'] : ['#c05a5a', '#e0b860', '#d89aa8'];
+  for (let i = 0; i < 22; i++) { const x = 3 + (hash(i, v, 81) * 33 | 0), y = 5 + (hash(i, v, 82) * 7 | 0); Rr(x, y + 1, 1, 2, '#3a5a2c'); Rr(x, y, 2, 1, cols[i % 3]); } for (let i = 0; i < 4; i++) Rr(4 + i * 9 + (hash(i, v, 83) * 4 | 0), 6, 2, 2, '#4a3a2a');
+  return A.outline ? A.outline(c, '#15151c') : c; }
+function hedgeArt() { const c = cv(32, 14), g = c.getContext('2d'), Rr = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  Rr(1, 3, 30, 10, '#24401e'); Rr(1, 3, 30, 3, '#3a5a2c'); for (let i = 0; i < 14; i++) Rr(1 + (hash(i, 1, 91) * 29 | 0), 3 + (hash(i, 2, 91) * 8 | 0), 2, 1, i % 2 ? '#4a6a36' : '#1c3218'); Rr(1, 12, 30, 1, '#1a2a16');
+  return A.outline ? A.outline(c, '#101810') : c; }

@@ -1,5 +1,9 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.6
+- 83 Kingsway's grounds are no longer a perfect bright-green square: a clearly visible, muted overgrown lawn surrounds the mansion and only its irregular outer band dithers and fades into the haunted purple ground (close-up, mid zoom and far view).
+- New BlackCard University entrance monument beside the front gate: two stone pillars with small lanterns (softly lit at night) and the BlackCard University crest (`assets/sprites/blackcard_crest_60.png`, cut out from the user's logo). Small estate garden touches: a dry stone fountain, two flower beds and low trimmed hedges inside the front fence. Existing path, lamps, fences, topiary, lavender and Tumnus's route unchanged; new props are decoration only (no collision, like the other garden props). Cache dark-forest-v38.
+
 ## v0.13.5
 - Night ground mist no longer shows as hard-edged flat pale ovals at mid zoom: each patch is now several overlapping soft feathered blobs (radial-gradient sprite) with gentle drift and wobble, same overall placement and low alpha. Cache bumped to dark-forest-v37.
 
