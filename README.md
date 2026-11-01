@@ -1,5 +1,8 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.5
+- Night ground mist no longer shows as hard-edged flat pale ovals at mid zoom: each patch is now several overlapping soft feathered blobs (radial-gradient sprite) with gentle drift and wobble, same overall placement and low alpha. Cache bumped to dark-forest-v37.
+
 ## v0.13.4
 - Mid zoom (between close-up and full map) no longer falls back to the 1-pixel-per-tile overview, which showed villages as a flat tan box of plots on blocky ground. That range now draws the real detailed ground chunks (smoothed when shrunk), crossfading into the painted map as you zoom out, so villages keep their houses, paths and fields. Cache bumped to dark-forest-v36.
 

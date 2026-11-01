@@ -407,7 +407,13 @@ export class Renderer {
       // snowflakes over the snowy peak, even when it is not storming
       if (SX > -100 && SX < Wd + 100 && SY > -100 && SY < Hd + 100) { ctx.fillStyle = 'rgba(255,255,255,0.85)'; for (let i = 0; i < 40; i++) { const fx = SX + ((hash(i, 11, 1) * 80 - 40 + t * 6 * (i % 3 - 1)) % 80) * (s / 16) * dpr, fy = SY + ((hash(i, 12, 1) * 80 - 40 + t * 10 * (0.5 + hash(i, 13, 1) * 0.5)) % 80) * (s / 16) * dpr; ctx.fillRect(fx, fy, 2 * dpr, 2 * dpr); } }
       // swamp mist: drifting translucent patches over marsh tiles in view
-      if (zf > 0) ctx.fillStyle = `rgba(220,230,220,${0.08 * zf})`; if (zf > 0) for (let i = 0; i < 6; i++) { const mx = (t * 8 * (i % 2 ? 1 : -1) + i * 200) % (Wd + 200) - 100, my = Hd * (0.2 + i * 0.13); ctx.beginPath(); ctx.ellipse(mx, my, 120 * dpr, 18 * dpr, 0, 0, 6.283); ctx.fill(); } }
+      // v0.13.5: mist patches are clusters of soft feathered blobs (pre-baked radial sprite) instead of one hard-edged flat ellipse
+      if (zf > 0) { const sp = this.mistTex || (this.mistTex = (() => { const c = cv(64, 64), g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(225,235,225,1)'); gr.addColorStop(0.35, 'rgba(225,235,225,0.55)'); gr.addColorStop(0.7, 'rgba(225,235,225,0.15)'); gr.addColorStop(1, 'rgba(225,235,225,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return c; })());
+        ctx.save(); ctx.imageSmoothingEnabled = true;
+        for (let i = 0; i < 6; i++) { const mx = (t * 8 * (i % 2 ? 1 : -1) + i * 200) % (Wd + 400) - 200 + Math.sin(t * 0.13 + i) * 20 * dpr, my = Hd * (0.2 + i * 0.13) + Math.sin(t * 0.09 + i * 2) * 6 * dpr;
+          for (let j = 0; j < 7; j++) { const hx = hash(i, j, 41), hy = hash(i, j, 42), hz = hash(i, j, 43), bw = (60 + hz * 90) * dpr * (1 + 0.08 * Math.sin(t * 0.3 + j)), bh = bw * (0.28 + hy * 0.2), bx = mx + (hx - 0.5) * 220 * dpr + Math.sin(t * 0.2 + j * 1.7) * 8 * dpr, by = my + (hy - 0.5) * 28 * dpr;
+            ctx.globalAlpha = 0.07 * zf * (0.6 + 0.4 * hz); ctx.drawImage(sp, bx - bw, by - bh, bw * 2, bh * 2); } }
+        ctx.restore(); } }
     // ---------- overlay: selection, labels ----------
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     for (const e of sim.ents) if (e.held && e.alive && e.rx !== undefined) { // v0.12 grab highlight: ground shadow + pulsing glow ring
