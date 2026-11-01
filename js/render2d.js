@@ -19,7 +19,7 @@ const PAL = {
   grass: ['#5f9e2e', '#73b53a', '#86c443', '#9ad24e', '#4c8a28'].map(H2), gline: H2('#3f7424'),
   wood: ['#3a6a2a', '#4c8030', '#5d9238', '#6ea43f', '#335e26'].map(H2),
   lawn: ['#3e5634', '#48623a', '#536d40', '#5f7848', '#33472d'].map(H2), // v0.13.6 overgrown mansion lawn: muted dark green, sits between forest and haunted purple
-  cor: ['#33283f', '#3d2f4c', '#4a395c', '#56436a', '#2a2034'].map(H2), cline: H2('#1f1828'),
+  cor: ['#2c4424', '#36522a', '#3f5c30', '#4a6436', '#263a20'].map(H2), cline: H2('#1e2e1a') /* nopurple: haunted ground = woods texture, darker and drier, no violet */,
   stone: ['#7a7f8c', '#8d93a0', '#a2a8b4', '#5f6470'].map(H2), sline: H2('#4a4e58'),
   brick: ['#5d6478', '#6b7286', '#7b8296', '#474c5f'].map(H2),
   bank: [H2('#7a4a2c'), H2('#5e3820')], foam: [H2('#d8f6f0'), H2('#b8ece8')],
@@ -57,7 +57,7 @@ export class Renderer {
   makeFog() { const c = cv(96, 96), g = c.getContext('2d'), d = g.createImageData(96, 96); for (let y = 0; y < 96; y++) for (let x = 0; x < 96; x++) { const f = (a, b, s) => { let t = 0; for (const [fr, am] of [[a, 0.6], [b, 0.4]]) { const X = x / 96 * fr, Y = y / 96 * fr; t += am * tileN(X, Y, fr, s); } return t; }; const v = clamp((f(4, 8, 1) - 0.42) * 2.2, 0, 1); const i = (y * 96 + x) * 4; d.data[i] = d.data[i + 1] = d.data[i + 2] = 255; d.data[i + 3] = v * 255; } g.putImageData(d, 0, 0); return c; }
   // ------------------------------------------------------------------ world setup
   setWorld(world, sim) {
-    this.w = world; this.sim = sim; this.chunks.clear(); this.objs.clear(); this.parts = []; this.ovDirty = true; // v0.21: zoomed-out overview must rebuild for a new world, or the old map lingers after a reset
+    this.w = world; this.sim = sim; this._refSrc = null; this._seaCut = null; if (this.refFull && this.refFull.naturalWidth) this.makePaint(); this.chunks.clear(); this.objs.clear(); this.parts = []; this.ovDirty = true; // v0.21: zoomed-out overview must rebuild for a new world, or the old map lingers after a reset
     const m = world.mansion, mx = Math.floor(m.x), mz = Math.floor(m.z); this.M = { cx: mx, cz: mz, x0: mx - 8, x1: mx + 8, z0: mz - 6, z1: mz + 6 };
     const M = this.M; M.px0 = M.x0 - 2; M.px1 = M.x1 + 2; M.pz0 = M.z0 - 2; M.pz1 = M.z1 + 4;
     // per-tile classification
@@ -84,7 +84,7 @@ export class Renderer {
     this.mansionArt = null; this.dirtyAll = true;
   }
   // v0.13.2: low-pass colour of the painted far map (128x128, 4 tiles per px) so close-up rock takes the painting's local tones
-  makePaint() { try { const a = cv(512, 512), ga = a.getContext('2d'); ga.imageSmoothingQuality = 'high'; ga.drawImage(this.refFull, 0, 0, 512, 512); const c = cv(128, 128), g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.filter = 'blur(1.5px)'; g.drawImage(a, 0, 0, 128, 128); PAINT = g.getImageData(0, 0, 128, 128).data; this.chunks.clear(); } catch (e) { PAINT = null; } }
+  makePaint() { try { const a = cv(512, 512), ga = a.getContext('2d'); ga.imageSmoothingQuality = 'high'; ga.drawImage(this.refSrc(), 0, 0, 512, 512); const c = cv(128, 128), g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.filter = 'blur(1.5px)'; g.drawImage(a, 0, 0, 128, 128); PAINT = g.getImageData(0, 0, 128, 128).data; this.chunks.clear(); } catch (e) { PAINT = null; } }
   classify(x, z) {
     const w = this.w, k = z * W + x, g = w.ground[k], sb = w.get(x, g - 1, z), M = this.M;
     let t = T.DIRT, gs = 0;
@@ -165,7 +165,7 @@ export class Renderer {
       const X = x0 + tx, Z = z0 + tz, k = Z * W + X, t = tt[k], ox = tx * P, oy = tz * P, h1 = hash(X, Z, 21), h2 = hash(X, Z, 22), h3 = hash(X, Z, 23), rg = w.region[k], corr = cor[k] > 0.55, stacked = w.stack[k] > 0 || w.get(X, w.ground[k], Z);
       const ax = ox + 2 + (h2 * 11 | 0), ay = oy + 3 + (h3 * 10 | 0);
       if (t === T.GRASS && gs[k] > 0.55 && !stacked) {
-        if (corr) { if (h1 < 0.3) g.drawImage(this.S('bram' + (X % 4), () => A.bramble(X % 4)), ox + 1, oy + 2); else if (h1 < 0.5) { R(ax, ay, 1, 3, '#6e3a8a'); R(ax + 2, ay + 1, 1, 2, '#9a5ab8'); } continue; }
+        if (corr) { if (h1 < 0.3) g.drawImage(this.S('bram' + (X % 4), () => A.bramble(X % 4)), ox + 1, oy + 2); else if (h1 < 0.5) { R(ax, ay, 1, 3, '#4a3a24'); R(ax + 2, ay + 1, 1, 2, '#6a5a3a'); } continue; }
         if (h1 < 0.35) { const c1 = rg === RG.WOODS ? '#7aa84a' : '#a8dc5a', c0 = rg === RG.WOODS ? '#2c5a22' : '#4c8a2a'; R(ax, ay, 1, 2, c1); R(ax + 2, ay - 1, 1, 3, c1); R(ax + 4, ay, 1, 2, c1); R(ax, ay + 2, 5, 1, c0); }
         else if (h1 < (rg === RG.MEADOW ? 0.47 : 0.4)) { const fc = ['#ffe24a', '#ffffff', '#ff6a8a', '#8ab8ff', '#ffb04a'][h2 * 5 | 0]; R(ax, ay, 2, 2, fc); R(ax + 1, ay + 1, 1, 1, '#c08a20'); R(ax + 4, ay + 3, 2, 2, fc); R(ax + 1, ay + 2, 1, 2, '#4c8a2a'); }
         else if (rg === RG.WOODS && h1 < 0.47) { R(ax, ay, 2, 1, '#c86a2a'); R(ax + 3, ay + 2, 1, 1, '#a0522a'); R(ax + 5, ay, 2, 1, '#d8a040'); }
@@ -225,7 +225,20 @@ export class Renderer {
   chunk(cx, cz, allowBuild) { const k = cx + ',' + cz; let c = this.chunks.get(k); if (c) { this.chunks.delete(k); this.chunks.set(k, c); return c; } if (!allowBuild) return null;
     c = this.bake(cx, cz); this.chunks.set(k, c); while (this.chunks.size > 90) this.chunks.delete(this.chunks.keys().next().value); return c; }
   // v0.13.10: far-zoom painting with its dark navy sea cut out (soft edge), so the game's animated water shows through and matches the water outside the map
-  seaCut() { if (this._seaCut) return this._seaCut; const w = this.w, N = 2304, c = cv(N, N), g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.drawImage(this.refFull, 0, 0, N, N);
+  // nopurple: the reference painting has a violet blob over the Haunted Heart. Recolour it in code toward the neighbouring forest: hue-gated (only purple/magenta pixels), luminance kept, mixed between mossy green, dead-leaf brown and ash by noise, faded out through a blurred, noise-ragged region mask so there is no edge.
+  refSrc() { if (this._refSrc) return this._refSrc; const w = this.w, im0 = this.refFull; if (!w || !im0 || !im0.naturalWidth) return im0; const N = im0.naturalWidth, c = cv(N, N), g = c.getContext('2d'); g.drawImage(im0, 0, 0);
+    let a = new Float32Array(W * D); for (let k = 0; k < W * D; k++) a[k] = w.region[k] === RG.HAUNT ? 1 : 0; const r = 10;
+    for (let pass = 0; pass < 3; pass++) { const b = new Float32Array(W * D); for (let z = 0; z < D; z++) { let acc = 0; for (let x = -r; x < W + r; x++) { if (x + r < W) acc += a[z * W + x + r]; if (x - r - 1 >= 0) acc -= a[z * W + x - r - 1]; if (x >= 0 && x < W) b[z * W + x] = acc / (2 * r + 1); } } const e = new Float32Array(W * D); for (let x = 0; x < W; x++) { let acc = 0; for (let z = -r; z < D + r; z++) { if (z + r < D) acc += b[(z + r) * W + x]; if (z - r - 1 >= 0) acc -= b[(z - r - 1) * W + x]; if (z >= 0 && z < D) e[z * W + x] = acc / (2 * r + 1); } } a = e; }
+    const id = g.getImageData(0, 0, N, N), d = id.data, sc = W / N;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const tx = x * sc, ty = y * sc, mk = a[(ty | 0) * W + (tx | 0)]; if (mk <= 0.004) continue; const m = clamp(mk * 2.4 + (vnoise(tx / 7, ty / 7, 91) - 0.5) * 0.9, 0, 1); if (m <= 0) continue;
+      const o = (y * N + x) * 4, R0 = d[o], G0 = d[o + 1], B0 = d[o + 2], mx = Math.max(R0, G0, B0), mn = Math.min(R0, G0, B0); 
+      // purple-ness: blue and red both above green
+      const pu = clamp((Math.min(R0, B0) - G0 + 2) / 14, 0, 1) + clamp((B0 - G0 - 4) / 18, 0, 1) * 0.6; const wgt = (0.7 + 0.3 * clamp(pu, 0, 1)) * m; // whole blob pulled toward the surrounding forest tones, purple pixels fully
+      const L = 0.3 * R0 + 0.59 * G0 + 0.11 * B0, n = vnoise(tx / 3, ty / 3, 92) + (hash(x >> 2, y >> 2, 93) - 0.5) * 0.25;
+      const T = n < 0.45 ? [0.80, 1.18, 0.62] : n < 0.7 ? [1.05, 1.08, 0.70] : n < 0.85 ? [1.18, 0.98, 0.70] : [1.0, 1.02, 0.94]; // moss, olive, dead-leaf brown, ash
+      const Lt = L * 1.12 + 6; d[o] = R0 + (clamp(Lt * T[0], 0, 255) - R0) * wgt; d[o + 1] = G0 + (clamp(Lt * T[1], 0, 255) - G0) * wgt; d[o + 2] = B0 + (clamp(Lt * T[2], 0, 255) - B0) * wgt; }
+    g.putImageData(id, 0, 0); return (this._refSrc = c); }
+  seaCut() { if (this._seaCut) return this._seaCut; const w = this.w, N = 2304, c = cv(N, N), g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.drawImage(this.refSrc(), 0, 0, N, N);
     const m = cv(W, D), mg = m.getContext('2d'), im = mg.createImageData(W, D); for (let k = 0; k < W * D; k++) { const sea = w.region[k] === RG.SEA && (w.water[k] || this.tt[k] === T.WATER); im.data[k * 4 + 3] = sea ? 0 : 255; } mg.putImageData(im, 0, 0);
     g.globalCompositeOperation = 'destination-in'; g.drawImage(m, 0, 0, N, N); g.globalCompositeOperation = 'source-over';
     // also key out leftover navy sea pixels in the painting near the coast (where the painted coastline sits outside the game's sea tiles)
@@ -256,7 +269,7 @@ export class Renderer {
         if (rg === RG.WOODS && hash(x, z, 23) < 0.16) { g.fillStyle = '#2f5a2a'; g.fillRect(x, z, 2, 2); px(x, z - 1, '#4c8030'); px(x + 1, z - 1, '#1e4a22'); } // pine: dark canopy + light top, denser than before
         else if (rg === RG.JUNGLE && hash(x, z, 24) < 0.18) { g.fillStyle = '#1e4a22'; g.fillRect(x, z, 2, 2); px(x - 1, z, '#3a7a2e'); px(x + 2, z, '#5a9a3a'); } // palm: dark cluster + light fronds
         else if (rg === RG.MARSH && hash(x, z, 25) < 0.18) { const h = hash(x, z, 36); if (h < 0.3) { px(x, z, '#4a3a22'); px(x, z - 1, '#6a5a3a'); px(x + 1, z - 1, '#8a9a4a'); } else if (h < 0.55) { px(x, z, '#7a6a2a'); px(x, z - 1, '#8a7a3a'); } else if (h < 0.75) { px(x, z, '#7a9a4a'); px(x + 1, z, '#5a7a3a'); } else { px(x, z, '#2a4a22'); px(x, z - 1, '#3a5a2a'); } } // swamp: dead moss trees (brown trunk + moss), reed clumps, mist patches, dark shrubs
-        else if (rg === RG.HAUNT && hash(x, z, 26) < 0.08) { px(x, z, '#1a1220'); px(x, z - 1, '#2a2034'); px(x + 1, z - 1, '#0a0810'); } // dead trees, denser
+        else if (rg === RG.HAUNT && hash(x, z, 26) < 0.08) { g.fillStyle = '#1e3a1e'; g.fillRect(x, z, 2, 2); px(x, z - 1, '#3a4a2a'); px(x + 1, z - 1, '#3a2e22'); } // dead trees, denser
         else if (rg === RG.MEADOW && hash(x, z, 37) < 0.08) { px(x, z, '#4c7a28'); px(x + 1, z, '#6a9a3a'); } // grass tufts on meadow, like the reference ground texture
         else if (rg === RG.HIGH && hash(x, z, 38) < 0.05) { px(x, z, '#5f6470'); } // rock dots on mountain ground
         else if (rg === RG.LAKE && hash(x, z, 39) < 0.04) { px(x, z, '#7a9a6a'); } // shore reeds around lakes
@@ -269,7 +282,7 @@ export class Renderer {
       // v0.21 reference: villages as thatched houses + tan fields, like the reference island — one cluster per living tribe, drawn in the overview so villages read at island view
       if (this.sim && this.sim.tribes) for (const tr of this.sim.tribes) { if (!tr.alive) continue; const vx = Math.round(tr.cx), vz = Math.round(tr.cz); g.fillStyle = '#c9b77a'; g.fillRect(vx - 9, vz - 6, 19, 13); g.fillStyle = '#8a7a4a'; g.fillRect(vx - 9, vz, 19, 1); g.fillRect(vx, vz - 6, 1, 13); for (const [hx, hz] of [[-7, -3], [3, -3], [-2, 3]]) { g.fillStyle = '#e8d8a8'; g.fillRect(vx + hx, vz + hz, 4, 3); g.fillStyle = '#7a5a2a'; g.fillRect(vx + hx - 1, vz + hz - 1, 6, 1); g.fillRect(vx + hx + 1, vz + hz - 2, 2, 1); } }
       // v0.21 reference: haunted centre as a dark castle, not just a purple patch
-      if (this.M) { const mx = this.M.cx, mz = this.M.cz; g.fillStyle = '#1a1220'; g.fillRect(mx - 4, mz - 3, 9, 6); g.fillStyle = '#2a2034'; g.fillRect(mx - 1, mz - 6, 1, 3); g.fillRect(mx - 4, mz - 5, 1, 2); g.fillRect(mx + 4, mz - 5, 1, 2); }
+      if (this.M) { const mx = this.M.cx, mz = this.M.cz; g.fillStyle = '#1e1c1a'; g.fillRect(mx - 4, mz - 3, 9, 6); g.fillStyle = '#34302a'; g.fillRect(mx - 1, mz - 6, 1, 3); g.fillRect(mx - 4, mz - 5, 1, 2); g.fillRect(mx + 4, mz - 5, 1, 2); }
       // v0.21 reference: sea texture speckle, like the deep blue textured sea in the reference
       for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) if (w.region[z * W + x] === RG.SEA && hash(x, z, 34) < 0.03) px(x, z, '#2a6a8a');
       // ruins: broken wall rectangles
@@ -503,7 +516,7 @@ export class Renderer {
     const items = this._labs.filter(l => !l[3] || cam.scale > 5);
     ctx.font = `${size}px "Jacquard 12", "Pixelify Sans", serif`;
     const boxes = []; for (const [x, z, n] of items) { if (n === REGION_NAMES[RG.SEA]) continue; const X = ox + x * s, Y = oy + z * s; if (X < -200 || Y < -50 || X > ctx.canvas.width + 200 || Y > ctx.canvas.height + 50) continue; { const tw = ctx.measureText(n).width * 0.5 + 6 * dpr, th = size * 0.6; if (boxes.some(q => Math.abs(q[0] - X) < q[2] + tw && Math.abs(q[1] - Y) < q[3] + th)) continue; boxes.push([X, Y, tw, th]); }
-      const txt = n.replace(/^the /, '').replace(/^\w/, c => c.toUpperCase()); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = size / 5; ctx.strokeStyle = 'rgba(26,16,10,.85)'; ctx.strokeText(txt, X, Y); ctx.fillStyle = n === '83 Kingsway' ? '#ffd27a' : n === REGION_NAMES[RG.HAUNT] ? '#e6b8ff' : '#fff0c8'; ctx.fillText(txt, X, Y); }
+      const txt = n.replace(/^the /, '').replace(/^\w/, c => c.toUpperCase()); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = size / 5; ctx.strokeStyle = 'rgba(26,16,10,.85)'; ctx.strokeText(txt, X, Y); ctx.fillStyle = n === '83 Kingsway' ? '#ffd27a' : n === REGION_NAMES[RG.HAUNT] ? '#d8dcc0' : '#fff0c8'; ctx.fillText(txt, X, Y); }
   }
 
   wallKind(x, z) { if (x < 0 || z < 0 || x >= W || z >= D) return null; const k = z * W + x; if (!this.wallSet.has(k)) return null; const w = this.w, g = w.ground[k], b0 = w.get(x, g, z); return b0 ? { b0, b1: w.get(x, g + 1, z), b2: w.get(x, g + 2, z) } : null; }
@@ -555,7 +568,7 @@ export class Renderer {
     const M = this.M, art = this.mansionArt, X = M.cx * P - 122, Y = (M.z1 + 1) * P - art.base;
     ctx.drawImage(art.canvas, X, Y);
     if (lit) for (const [wx, wy] of art.wins) { const x = (X + wx) / P, z = (Y + wy) / P; lights.push([x, z + 1, 2.2, 'warm', 0.55]); glow.push([x, z, 0.7, 'warm']); }
-    lights.push([M.cx, M.z1 + 3, 6, 'purple', 0.5]);
+    lights.push([M.cx, M.z1 + 3, 6, 'warm', 0.35]);
     if (lit && Math.random() < 0.15) this.parts.push({ k: 'bat', x: M.cx + (Math.random() - 0.5) * 6, z: M.cz - 10, vx: (Math.random() - 0.5) * 6, vz: -1 - Math.random() * 2, life: 3 });
   }
   drawSpot(ctx, o, draw, t) {
@@ -689,7 +702,7 @@ function hollowArt() { const c = cv(38, 18), g = c.getContext('2d'); g.fillStyle
   g.fillStyle = '#c8935a'; g.beginPath(); g.ellipse(32, 9.5, 4, 6, 0, 0, 6.283); g.fill(); g.fillStyle = '#140c08'; g.beginPath(); g.ellipse(32, 9.5, 2.6, 4.4, 0, 0, 6.283); g.fill(); g.fillStyle = '#4a8a3a'; g.fillRect(8, 3, 7, 2); g.fillRect(19, 3, 4, 1); g.fillStyle = '#d8b040'; g.fillRect(12, 2, 2, 1); return A.outline(c); }
 function thickArt() { const c = cv(34, 26), g = c.getContext('2d'); const P2 = ['#1c3a1a', '#2a4e24', '#3a6a2e', '#4e8238'];
   for (let i = 0; i < 6; i++) { const cx = 7 + i * 4 + hash(i, 1, 5) * 4, cy = 12 + hash(i, 2, 5) * 7, rx = 7, ry = 6; for (let y = 0; y < 26; y++) for (let x = 0; x < 34; x++) { const nx = (x - cx) / rx, ny = (y - cy) / ry, d = nx * nx + ny * ny; if (d > 1 + (hash(x, y, i) - 0.5) * 0.4) continue; g.fillStyle = P2[clamp(Math.floor((-ny * 0.6 - nx * 0.3 + 0.6) * 3 + hash(x, y, 9) * 0.8), 0, 3)]; g.fillRect(x, y, 1, 1); } }
-  for (let i = 0; i < 18; i++) { g.fillStyle = i % 3 ? '#9a5ab8' : '#c83a3a'; g.fillRect(3 + hash(i, 3, 5) * 28 | 0, 4 + hash(i, 4, 5) * 18 | 0, 1, 2); } return A.outline(c, '#0e1a0c'); }
+  for (let i = 0; i < 18; i++) { g.fillStyle = i % 3 ? '#8a6a3a' : '#c83a3a'; g.fillRect(3 + hash(i, 3, 5) * 28 | 0, 4 + hash(i, 4, 5) * 18 | 0, 1, 2); } return A.outline(c, '#0e1a0c'); }
 function tentArt() { const c = cv(26, 22), g = c.getContext('2d'); for (let y = 0; y < 16; y++) { const w = Math.round(2 + y * 1.3); g.fillStyle = y % 4 === 0 ? '#8a6a3a' : '#b08a4a'; g.fillRect(13 - w / 2, 4 + y, w, 1); } g.fillStyle = '#2a1a10'; g.fillRect(11, 12, 4, 8); g.fillStyle = '#6b4224'; g.fillRect(12, 1, 2, 4); return A.outline(c); }
 
 // v0.13.1 natural rock: world-pixel coords → seamless across tiles/chunks. mode 0 rock, 1 low slope (moss/lichen), 2 snowy.
@@ -744,7 +757,7 @@ function fountainArt() { const c = cv(40, 30), g = c.getContext('2d'), Rr = (x, 
   Rr(12, 20, 5, 2, '#4a3a22'); Rr(24, 21, 6, 1, '#5a4a2a'); Rr(17, 22, 3, 1, '#4a5a2a'); Rr(18, 6, 4, 15, '#6a6a74'); Rr(18, 6, 1, 15, '#8a8a94'); Rr(14, 4, 12, 3, '#7a7a84'); Rr(15, 3, 10, 1, '#8a8a94'); Rr(19, 0, 2, 4, '#6a6a74'); Rr(8, 22, 2, 2, '#3a5a2c'); Rr(29, 18, 2, 3, '#3a5a2c'); Rr(26, 25, 3, 1, '#4a4a52');
   return A.outline ? A.outline(c, '#15151c') : c; }
 function flowerBed(v) { const c = cv(40, 16), g = c.getContext('2d'), Rr = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
-  Rr(1, 4, 38, 11, '#5a5a62'); Rr(2, 5, 36, 9, '#3a2a1e'); Rr(1, 4, 38, 1, '#7a7a84'); const cols = v ? ['#9a6aaa', '#c890d0', '#e0c0e8'] : ['#c05a5a', '#e0b860', '#d89aa8'];
+  Rr(1, 4, 38, 11, '#5a5a62'); Rr(2, 5, 36, 9, '#3a2a1e'); Rr(1, 4, 38, 1, '#7a7a84'); const cols = v ? ['#8a7a5a', '#a89a78', '#c8c0a8'] : ['#c05a5a', '#e0b860', '#d89aa8'];
   for (let i = 0; i < 22; i++) { const x = 3 + (hash(i, v, 81) * 33 | 0), y = 5 + (hash(i, v, 82) * 7 | 0); Rr(x, y + 1, 1, 2, '#3a5a2c'); Rr(x, y, 2, 1, cols[i % 3]); } for (let i = 0; i < 4; i++) Rr(4 + i * 9 + (hash(i, v, 83) * 4 | 0), 6, 2, 2, '#4a3a2a');
   return A.outline ? A.outline(c, '#15151c') : c; }
 function hedgeArt() { const c = cv(32, 14), g = c.getContext('2d'), Rr = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };

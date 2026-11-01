@@ -102,9 +102,9 @@ export function pillar() { const c = cv(16, 34), g = c.getContext('2d'); R(g, 4,
 export function bookshelf() { const c = cv(24, 30), g = c.getContext('2d'); R(g, 1, 3, 22, 26, '#5e3a1f'); R(g, 0, 1, 24, 3, '#8a5a32');
   const B = ['#a83a3a', '#3a6aa8', '#3a8a5a', '#c8a03a', '#7a4a9a', '#d8d0c0']; for (let s = 0; s < 3; s++) { let x = 3; while (x < 21) { const w = 2 + (hash(x, s, 5) * 2 | 0), h = 5 + (hash(s, x, 6) * 3 | 0); R(g, x, 6 + s * 8 + (8 - h), w, h, B[hash(x, s, 9) * 6 | 0]); x += w; } R(g, 2, 13 + s * 8, 20, 1, '#3a2414'); }
   return outline(c); }
-export function bramble(v) { const c = cv(14, 12), g = c.getContext('2d'); const C = ['#4a2a5e', '#6e3a8a', '#9a5ab8', '#c48ae0'];
+export function bramble(v) { const c = cv(14, 12), g = c.getContext('2d'); const C = ['#2e2a1e', '#4a3a26', '#6a5a3a', '#7a7a5a']; // nopurple: dead brown bramble
   for (let i = 0; i < 5; i++) { const x = 2 + hash(v, i, 1) * 10 | 0, y = 3 + hash(v, i, 2) * 7 | 0; R(g, x, y, 1, 11 - y, C[1]); R(g, x - 1, y + 1, 1, 1, C[2]); R(g, x + 1, y + 2, 1, 1, C[3]); }
-  R(g, 3, 9, 8, 2, C[0]); return outline(c, '#1a0c24'); }
+  R(g, 3, 9, 8, 2, C[0]); return outline(c, '#14120c'); }
 export function construction(top) { const c = cv(18, 20), g = c.getContext('2d'); const col = { 8: ['#c8935a', '#8a5a32'], 9: ['#a0a6b4', '#6f7586'], 23: ['#f0c45a', '#b8862a'], 6: ['#a87444', '#6b4224'], 10: ['#6b7286', '#474c5f'] }[top] || ['#c8935a', '#8a5a32'];
   R(g, 1, 1, 16, 8, col[0]); R(g, 1, 9, 16, 9, col[1]); R(g, 1, 9, 16, 1, '#00000040'); for (let x = 1; x < 17; x += 5) R(g, x, 10, 1, 8, '#00000030'); return outline(c); }
 // ---------------- crops (baked in ground) ----------------
