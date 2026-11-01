@@ -1,5 +1,5 @@
 // Dark Forest v0.2 — Canvas 2D top-down pixel renderer (16 art px per tile, chunk-cached ground, y-sorted sprites, light map)
-import { W, D, WATER, CH, NC, B, RG, REGION_NAMES } from './world.js';
+import { W, D, WATER, CH, NC, B, RG, REGION_NAMES, LOOP } from './world.js';
 // v0.10: bat-form sprite hook. null = the code-drawn bigBat() from art.js (shipping default).
 // To swap in an image (e.g. a painted bat), set this to its path, e.g. 'assets/bat.png'.
 // v0.11: Kyler's approved 2-frame sheet (left half = wings up, right half = wings down). null = code-drawn bigBat().
@@ -28,6 +28,8 @@ const PAL = {
 const WATERC = [[76, 196, 196], [52, 168, 186], [38, 140, 172], [28, 112, 152], [20, 84, 126]];
 // scale a packed rgb() colour by f (r in low byte, b in high byte, as rgb() packs it)
 const shadeCol = (c, f) => (255 << 24) | (Math.min(255, Math.round((c >> 16 & 255) * f)) << 16) | (Math.min(255, Math.round((c >> 8 & 255) * f)) << 8) | Math.min(255, Math.round((c & 255) * f));
+// v0.13.7: distance (in tiles, approx) from world point to the grounds path centreline; >0 outside the path band
+function loopD(M, wx, wz) { const u = (wx - M.cx - 0.5) / LOOP.rx, v = (wz - M.cz - 0.5 - LOOP.oz) / LOOP.rz; if (u * u + v * v > 2.2 || u * u + v * v < 0.5) return 99; const th = Math.atan2(v, u); return Math.abs(Math.hypot(u, v) - LOOP.f(th)) * 16; }
 export class Renderer {
   constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d', { alpha: false }); this.chunks = new Map(); this.objs = new Map(); this.spr = new Map(); this.parts = []; this.showLabels = true; this.t = 0;
     this.light = cv(8, 8); this.lctx = this.light.getContext('2d'); this.glowC = {};
@@ -67,6 +69,7 @@ export class Renderer {
     for (let x = M.px0 - 4; x <= M.px1 + 4; x++) { if (Math.abs(x + 0.5 - (mx)) < 3) continue; this.decor.push({ t: 'fence', x: x + 0.5, z: M.pz1 + 5 }); }
     for (let x = M.px0 - 4; x <= M.px1 + 4; x++) this.decor.push({ t: 'fence', x: x + 0.5, z: M.pz0 - 4 });
     // v0.13.6 estate garden + BlackCard University entrance sign (render-only props, no collision, clear of the path/lamps)
+    /* v0.13.7: Narnia lamps along the winding limestone path (outer edge), skipping the front bridge */ for (let i = 0; i < 10; i++) { const th = i * Math.PI / 5 + 0.31, f = LOOP.f(th), lx = mx + 0.5 + (LOOP.rx * f + 1.4) * Math.cos(th), lz = mz + 0.5 + LOOP.oz + (LOOP.rz * f + 1.4) * Math.sin(th); if (Math.abs(lx - mx - 0.5) < 4 && lz > mz) continue; this.decor.push({ t: 'kingslamp', x: lx, z: lz }); }
     this.decor.push({ t: 'bcsign', x: mx - 5.2, z: M.pz1 + 7.6 });
     this.decor.push({ t: 'fountain', x: mx + 11.2, z: M.z1 + 5.2 }); this.decor.push({ t: 'fbed', x: mx - 10.8, z: M.z1 + 6.6, v: 0 }); this.decor.push({ t: 'fbed', x: mx + 8.6, z: M.z1 + 7.6, v: 1 });
     for (const sd of [-1, 1]) for (let i = 0; i < 4; i++) this.decor.push({ t: 'hedge', x: mx + 0.5 + sd * (4.4 + i * 1.9), z: M.pz1 + 3.9 });
@@ -141,6 +144,7 @@ export class Renderer {
         else { const corr = cr > 0.82; if (corr) col = PAL.cor[hr < 0.2 ? 4 : hr < 0.7 ? 1 : 2]; else { const v = vnoise(gx / 6, gy / 6, 13) + (hr - 0.5) * 0.12; col = PAL.dirt[v < 0.25 ? 3 : v < 0.6 ? 0 : v < 0.85 ? 1 : 2];
           // stippled cobble patches (reference look)
           if (vnoise(gx / 40, gy / 40, 11) > 0.6) { const cxl = gx % 5, cyl = gy % 4, ch = hash(gx / 5 | 0, gy / 4 | 0, 12); if (ch < 0.55) { if (cyl === 3 && cxl < 4) col = PAL.dirt[4]; else if (cyl < 3 && cxl < 4) col = cyl === 0 ? PAL.dirt[2] : PAL.dirt[1]; } } } }
+        if (t !== T.WATER && t !== T.BRIDGE && t !== T.BRICK) { const pd = loopD(this.M, gx / P, gy / P) + (vnoise(gx / 5, gy / 5, 81) - 0.5) * 0.5; if (pd < LOOP.hw) { /* v0.13.7: crushed 1/4-down limestone, pale sand with grit speckle */ const gr = hash(gx, gy, 82), v = vnoise(gx / 3, gy / 3, 83); let L = gr < 0.07 ? [152, 128, 88] : gr > 0.95 ? [240, 226, 190] : v < 0.4 ? [214, 186, 132] : v < 0.75 ? [224, 198, 146] : [202, 174, 122]; if (pd > LOOP.hw - 0.22) { const r0 = col & 255, g0 = col >> 8 & 255, b0 = col >> 16 & 255, a = (LOOP.hw - pd) / 0.22; L = [r0 + (L[0] - r0) * a, g0 + (L[1] - g0) * a, b0 + (L[2] - b0) * a]; } col = rgb(L[0] | 0, L[1] | 0, L[2] | 0); } }
         // cliff faces where the ground steps down
         const drop = h - hS; if (drop >= 2 && t !== T.WATER && py >= P - Math.min(6, drop * 2)) { const cc = A.hex(py === P - Math.min(6, drop * 2) ? '#5a3a24' : (px + py) % 4 === 0 ? '#8a5a36' : '#a46e40'); col = rgb(cc[0], cc[1], cc[2]); }
         else if (h > 18) { const f = 1 + Math.min(0.12, (h - 18) * 0.008); const r0 = col & 255, g0 = col >> 8 & 255, b0 = col >> 16 & 255; col = rgb(Math.min(255, r0 * f | 0), Math.min(255, g0 * f | 0), Math.min(255, b0 * f | 0)); }
@@ -220,7 +224,7 @@ export class Renderer {
       else if (this.w.region[k] === RG.MARSH) col = (() => { const h = hash(x, z, 35); return h < 0.2 ? rgb(42, 74, 58) : h < 0.35 ? rgb(106, 154, 58) : h < 0.5 ? rgb(58, 74, 42) : h < 0.65 ? rgb(74, 90, 58) : rgb(52, 66, 38); })(); // v0.21 reference 2: swamp is murky water / mud / green pools, not tan sand
       else if (t === T.SAND) col = PAL.sand[0]; else if (t === T.FARM) col = PAL.farm[1];
       else if (t === T.GRASS && this.gs[k] + (vnoise(x / 2, z / 2, 1) - 0.5) * 0.5 > 0.5) col = this.lawn[k] > 0.3 ? PAL.lawn[hash(x, z, 33) < 0.5 ? 1 : 2] : cr ? PAL.cor[1] : (() => { const OLIVE = [[106, 138, 58], [122, 154, 69], [90, 122, 48], [138, 154, 74]]; const o = OLIVE[Math.floor(hash(x, z, 31) * 4)]; return rgb(o[0], o[1], o[2]); })();
-      else col = cr ? PAL.cor[2] : PAL.dirt[1]; // v0.18: zoomed-out woods get dark tree speckles; v0.19: jungle even darker; v0.21: fixed a bug where this else was inside a comment, so sand/farm/dirt tiles rendered transparent black on the zoomed-out map
+      else col = cr ? PAL.cor[2] : PAL.dirt[1]; if (t !== T.WATER && t !== T.BRIDGE && t !== T.BRICK && loopD(this.M, x + 0.5, z + 0.5) < LOOP.hw) col = rgb(218, 190, 138); // v0.18: zoomed-out woods get dark tree speckles; v0.19: jungle even darker; v0.21: fixed a bug where this else was inside a comment, so sand/farm/dirt tiles rendered transparent black on the zoomed-out map
       b[k] = col; }
     g.putImageData(img, 0, 0);
     // v0.21: zoomed-out zone pictures — still 1px-per-tile pixel art, no smoothing, but each zone now draws as a picture, not a flat colour patch.
@@ -304,7 +308,7 @@ export class Renderer {
     // ---------- v0.9: the mansion's shadow (vampire sun-immunity zone), shown by day ----------
     { const da = sim.dayAmt ? sim.dayAmt() : 0; if (da > 0.05 && inV(M.cx, M.cz, 30)) { const m = sim.w.mansion, R = (sim.SHADE_R || 12) * P, cx = m.x * P, cz = m.z * P;
       ctx.save(); const gr = ctx.createRadialGradient(cx, cz, R * 0.55, cx, cz, R); gr.addColorStop(0, `rgba(30,10,40,${0.18 * da})`); gr.addColorStop(0.8, `rgba(45,12,60,${0.32 * da})`); gr.addColorStop(1, 'rgba(40,12,50,0)');
-      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(cx, cz, R, 0, 6.283); ctx.fill(); ctx.strokeStyle = `rgba(190,80,210,${0.7 * da})`; ctx.lineWidth = 2.5; ctx.setLineDash([8, 6]); ctx.lineDashOffset = -t * 4; ctx.beginPath(); ctx.arc(cx, cz, R - 1, 0, 6.283); ctx.stroke(); ctx.restore(); } }
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(cx, cz, R, 0, 6.283); ctx.fill(); /* v0.13.7: dashed purple outline removed per Kyler; soft shade only */ ctx.restore(); } }
     // ---------- shadows ----------
     ctx.fillStyle = 'rgba(20,30,10,0.28)';
     for (const o of list) { const sh = SH[o.t]; if (!sh || (o.t === 'vamp' && o.e.bat)) continue; ctx.fillStyle = (o.t === 'thr' || o.t === 'vamp' || o.t === 'peng' || o.t === 'tum') ? 'rgba(15,22,8,0.42)' : 'rgba(20,30,10,0.28)'; ctx.beginPath(); ctx.ellipse(o.x * P + sh[2], o.z * P + sh[3], sh[0], sh[1], 0, 0, 6.283); ctx.fill(); }
@@ -419,11 +423,27 @@ export class Renderer {
       // swamp mist: drifting translucent patches over marsh tiles in view
       // v0.13.5: mist patches are clusters of soft feathered blobs (pre-baked radial sprite) instead of one hard-edged flat ellipse
       if (zf > 0) { const sp = this.mistTex || (this.mistTex = (() => { const c = cv(64, 64), g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(225,235,225,1)'); gr.addColorStop(0.35, 'rgba(225,235,225,0.55)'); gr.addColorStop(0.7, 'rgba(225,235,225,0.15)'); gr.addColorStop(1, 'rgba(225,235,225,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return c; })());
+        // v0.13.7: fog comes and goes. Thickest in creepy places (mansion grounds, swamp), at night and dawn; open woods only on some foggy nights; storms thin it out (rain clears mist) except over the swamp
+        const mansNear = clamp((95 - mansD) / 35, 0, 1), creepy = mansNear, nightish = clamp(night * 1.2 + (sim.tod > 0.18 && sim.tod < 0.3 ? 0.6 : 0), 0, 1), foggyNight = hash(sim.day | 0, 7, 77) < 0.45 ? 1 : 0;
+        const fogN = this.fogForce ?? foggyNight, mp = mansNear * clamp(0.35 + 0.65 * nightish, 0, 1) * (sim.storm && reg !== RG.MARSH ? 0.25 : 1) * (0.6 + 0.4 * Math.sin(t * 0.045 + 1.3));
+        if (mp * zf > 0.02) {
         ctx.save(); ctx.imageSmoothingEnabled = true;
-        for (let i = 0; i < 6; i++) { const mx = (t * 8 * (i % 2 ? 1 : -1) + i * 200) % (Wd + 400) - 200 + Math.sin(t * 0.13 + i) * 20 * dpr, my = Hd * (0.2 + i * 0.13) + Math.sin(t * 0.09 + i * 2) * 6 * dpr;
-          for (let j = 0; j < 7; j++) { const hx = hash(i, j, 41), hy = hash(i, j, 42), hz = hash(i, j, 43), bw = (60 + hz * 90) * dpr * (1 + 0.08 * Math.sin(t * 0.3 + j)), bh = bw * (0.28 + hy * 0.2), bx = mx + (hx - 0.5) * 220 * dpr + Math.sin(t * 0.2 + j * 1.7) * 8 * dpr, by = my + (hy - 0.5) * 28 * dpr;
-            ctx.globalAlpha = 0.07 * zf * (0.6 + 0.4 * hz); ctx.drawImage(sp, bx - bw, by - bh, bw * 2, bh * 2); } }
-        ctx.restore(); } }
+        for (let i = 0; i < 6; i++) { const mx = (t * 8 * (i % 2 ? 1 : -1) + i * 260) % (Wd + 900) - 450 + Math.sin(t * 0.13 + i) * 20 * dpr, my = Hd * (0.2 + i * 0.13) + Math.sin(t * 0.09 + i * 2) * 6 * dpr;
+          for (let j = 0; j < 9; j++) { const hx = hash(i, j, 41), hy = hash(i, j, 42), hz = hash(i, j, 43), bw = (150 + hz * 210) * dpr * (1 + 0.08 * Math.sin(t * 0.3 + j)), bh = bw * (0.28 + hy * 0.2), bx = mx + (hx - 0.5) * 460 * dpr + Math.sin(t * 0.2 + j * 1.7) * 8 * dpr, by = my + (hy - 0.5) * 80 * dpr;
+            ctx.globalAlpha = 0.2 * zf * mp * (0.6 + 0.4 * hz); /* v0.13.7: mist opacity ~3x per Kyler */ ctx.drawImage(sp, bx - bw, by - bh, bw * 2, bh * 2); } }
+        ctx.restore(); }
+        // v0.13.7: outside the mansion, fog = low clouds sitting just above the ground. World-anchored banks ~10x the old patch size, drifting with the wind, with clear gaps between them.
+        // Swamp gets them most nights; open country only on foggy nights/dawns; storms thin them (except the swamp).
+        const zc = clamp((s / dpr - 3) / 6, 0, 1), cA = (1 - mansNear) * zc * (sim.storm ? 0.3 : 1) * (0.7 + 0.3 * Math.sin(t * 0.03 + 0.7));
+        if (cA > 0.01) { ctx.save(); ctx.imageSmoothingEnabled = true; const C = 44, wind = t * 0.18, cx0 = Math.floor((vx0 - 40 - wind) / C), cx1 = Math.floor((vx1 + 40 - wind) / C), cz0 = Math.floor((vz0 - 30) / C), cz1 = Math.floor((vz1 + 30) / C);
+          for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) { if (hash(cx, cz, 91) > 0.55) continue;
+            const bxw = (cx + 0.5 + (hash(cx, cz, 92) - 0.5) * 0.6) * C + wind, bzw = (cz + 0.5 + (hash(cx, cz, 93) - 0.5) * 0.6) * C;
+            const rg = wv.region[clamp(bzw | 0, 0, D - 1) * W + clamp(bxw | 0, 0, W - 1)], marsh = rg === RG.MARSH, here = marsh ? (sim.storm ? 1 : 1) * (0.35 + 0.65 * nightish) : fogN * nightish * 0.85 + 0.12 * (sim.tod > 0.18 && sim.tod < 0.3 ? 1 : 0);
+            if (here * cA < 0.02) continue;
+            for (let j = 0; j < 10; j++) { const h1 = hash(cx * 7 + j, cz, 94), h2 = hash(cx, cz * 7 + j, 95), h3 = hash(cx + j, cz - j, 96), r = (7 + h3 * 11) * (1 + 0.06 * Math.sin(t * 0.2 + j)) * s, wx = bxw + (h1 - 0.5) * 30 + Math.sin(t * 0.07 + j) * 1.5, wz = bzw + (h2 - 0.5) * 14;
+              const X = ox + wx * s, Y = oy + wz * s; if (X + r < -50 || X - r > Wd + 50 || Y + r < -50 || Y - r > Hd + 50) continue;
+              ctx.globalAlpha = 0.3 * here * cA * (0.6 + 0.4 * h3); ctx.drawImage(sp, X - r, Y - r * 0.55, r * 2, r * 1.1); } }
+          ctx.restore(); } } }
     // ---------- overlay: selection, labels ----------
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     for (const e of sim.ents) if (e.held && e.alive && e.rx !== undefined) { // v0.12 grab highlight: ground shadow + pulsing glow ring

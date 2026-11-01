@@ -18,8 +18,7 @@ export function topiary(v) { const c = cv(16, 15), g = c.getContext('2d'), P = [
 export function kingsLamp(lit) { const c = cv(44, 60), g = c.getContext('2d');
   R(g, 19, 14, 3, 44, '#16181c'); R(g, 20, 14, 1, 44, '#30343c'); R(g, 16, 54, 9, 4, '#16181c'); R(g, 17, 52, 7, 2, '#22262c'); R(g, 18, 30, 5, 2, '#16181c');
   R(g, 16, 2, 9, 11, '#16181c'); R(g, 17, 3, 7, 9, lit ? '#ffd780' : '#9aa6b0'); if (lit) { R(g, 18, 4, 5, 6, '#fff2c0'); } R(g, 19, 3, 1, 9, '#16181c'); R(g, 21, 3, 1, 9, '#16181c'); R(g, 15, 1, 11, 2, '#16181c'); R(g, 18, 0, 5, 1, '#16181c'); R(g, 17, 13, 7, 2, '#16181c');
-  // "Kingsway" street sign
-  R(g, 2, 33, 40, 9, '#1a1c20'); R(g, 3, 34, 38, 7, '#2a4a36'); R(g, 3, 34, 38, 1, '#4a6a56'); pixText(g, 'Kingsway', 6, 35, '#f4f6f0'); R(g, 21, 32, 1, 1, '#16181c');
+  // v0.13.7: "Kingsway" street sign removed from the lamps per Kyler
   return c; }
 export function mansion(lit) {
   const c = cv(304, 340), g = c.getContext('2d'), wins = [];

@@ -1,5 +1,10 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.7
+- Night fog is clearly translucent (not barely there) and situational: it gathers around the mansion, and on foggy nights large low fog banks drift across other zones (always some in the swamp, light at dawn, thinned in storms).
+- The dashed purple outline around the mansion grounds is gone (soft shade kept).
+- The grounds path is now a winding, sand-coloured crushed 1/4-down limestone loop along the lawn edge, with Narnia lamp posts along it (no street-name labels) and Tumnus parading along the same path. Cache dark-forest-v39.
+
 ## v0.13.6
 - 83 Kingsway's grounds are no longer a perfect bright-green square: a clearly visible, muted overgrown lawn surrounds the mansion and only its irregular outer band dithers and fades into the haunted purple ground (close-up, mid zoom and far view).
 - New BlackCard University entrance monument beside the front gate: two stone pillars with small lanterns (softly lit at night) and the BlackCard University crest (`assets/sprites/blackcard_crest_60.png`, cut out from the user's logo). Small estate garden touches: a dry stone fountain, two flower beds and low trimmed hedges inside the front fence. Existing path, lamps, fences, topiary, lavender and Tumnus's route unchanged; new props are decoration only (no collision, like the other garden props). Cache dark-forest-v38.
