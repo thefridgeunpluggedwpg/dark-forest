@@ -1,5 +1,8 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.9
+- New app icon: the 83 Kingsway mansion at night with bats, a crescent moon, swirling fog and twisted purple trees (icons/icon-v3-*). Cache dark-forest-v41.
+
 ## v0.13.8
 - The estate iron fences are removed, and the winding limestone path now loops wider around the grounds (with a bigger lawn) so it never cuts through anything. Lamps and Tumnus's route follow it. Cache dark-forest-v40.
 
