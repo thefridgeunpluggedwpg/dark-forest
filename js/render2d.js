@@ -63,6 +63,7 @@ export class Renderer {
     // per-tile classification
     const n = W * D; this.tt = new Uint8Array(n); this.gs = new Float32Array(n); this.cor = new Float32Array(n); this.lawn = new Float32Array(n);
     for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) this.classify(x, z);
+    this.makeShore();
     // haunted scatter + village props
     this.decor = [];
     const r = (i, s) => hash(i, s, world.seed * 13 + 7);
@@ -96,6 +97,13 @@ export class Renderer {
     else if (sb === B.GRASS) { t = T.GRASS; const rg = w.region[k]; gs = 0.3 + 0.8 * vnoise(x / 7, z / 7, 5) + (rg === RG.WOODS ? 0.3 : rg === RG.MEADOW ? 0.1 : 0); for (const tr of this.sim.tribes) { const d = Math.hypot(x - tr.cx, z - tr.cz); if (d < 4) gs -= (4 - d) * 0.25; } }
     /* v0.13.6: lawn is an organic noise-warped blob that fades into the haunted ground, not a hard rectangle */ const ex = (x + 0.5 - M.cx) / 24.5, ez = (z + 0.5 - M.cz - 1.5) / 23.5, /* v0.13.7b: lawn grown so the outer path still borders grass */ e = Math.hypot(ex, ez) + (vnoise(x / 4, z / 4, 71) - 0.5) * 0.45 + (vnoise(x / 1.7, z / 1.7, 72) - 0.5) * 0.12, lf = clamp((1.12 - e) / 0.22, 0, 1), inLawn = lf > 0.5; this.lawn[k] = lf; if (lf > 0.3 && t === T.GRASS) gs = Math.max(gs, 0.6 + 0.6 * lf); this.tt[k] = t; this.gs[k] = gs; const dm = Math.hypot(x - M.cx, z - M.cz); this.cor[k] = clamp((44 - dm) / 14 + (vnoise(x / 6, z / 6, 9) - 0.5) * 0.9, 0, 1) * (1 - lf) * (1 - lf);
   }
+  // v0.31 coast: smooth water field near the open sea, so the shoreline is a soft curve sampled per pixel, not a per-tile staircase
+  makeShore() { const w = this.w, n = W * D, blur = (f, R) => { const t = new Float32Array(n), o = new Float32Array(n);
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { let s = 0; for (let d = -R; d <= R; d++) s += f[z * W + clamp(x + d, 0, W - 1)]; t[z * W + x] = s / (2 * R + 1); }
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { let s = 0; for (let d = -R; d <= R; d++) s += t[clamp(z + d, 0, D - 1) * W + x]; o[z * W + x] = s / (2 * R + 1); } return o; };
+    const wm = new Float32Array(n), om = new Float32Array(n); for (let k = 0; k < n; k++) { wm[k] = this.tt[k] === T.WATER ? 1 : 0; om[k] = wm[k] && w.region[k] === RG.SEA ? 1 : 0; }
+    let f = wm; for (let i = 0; i < 2; i++) f = blur(f, 2); let ns = om; for (let i = 0; i < 2; i++) ns = blur(ns, 3);
+    let sf = om; for (let i = 0; i < 2; i++) sf = blur(sf, 2); this.shoreF = f; this.nearSea = ns; this.seaF = sf; this._seaCut = null; }
   // ------------------------------------------------------------------ ground chunk baking
   bake(cx, cz) {
     const w = this.w, c = cv(CP, CP), g = c.getContext('2d'), img = g.createImageData(CP, CP), buf = new Uint32Array(img.data.buffer);
@@ -116,14 +124,24 @@ export class Renderer {
         let col;
         if (t === T.BRICK || t === T.BRIDGE) { const row = gy >> 2, m = (gy & 3) === 3 || ((gx + (row & 1) * 4) & 7) === 0; col = m ? PAL.brick[3] : PAL.brick[hr < 0.15 ? 0 : hr > 0.9 ? 2 : 1];
           if (t === T.BRIDGE) { const wet = vnoise(gx / 5, gy / 5, 31); col = m ? H2('#4a4f5c') : wet > 0.62 ? H2('#9aa6b8') : wet > 0.5 ? H2('#7c8698') : PAL.brick[hr < 0.2 ? 0 : 1]; if (!m && hr > 0.985) col = H2('#d8e4f0'); else if (!m && wet > 0.66 && hr > 0.9) col = H2('#e8b060'); } buf[o] = col; continue; }
-        const wf = bil(wv) + (n1 - 0.5) * 0.34 + (n2 - 0.5) * 0.06;
+        const SF = this.shoreF, coastPx = this.nearSea[k] > 0.004 && t !== T.STONE && w.region[k] !== RG.HIGH && w.region[k] !== RG.VOLCANO && w.region[k] !== RG.MARSH;
+        const n3w = vnoise(gx / 23, gy / 23, 92), wf = coastPx ? bil(q => SF[q]) + (n3w - 0.5) * 0.22 + (n1 - 0.5) * 0.12 + (n2 - 0.5) * 0.05 : bil(wv) + (n1 - 0.5) * 0.34 + (n2 - 0.5) * 0.06;
+        let shoreG = false;
+        if (coastPx && wf > 0.5) { // sea side: thin broken foam lip, then the shelf shows through the translucent shallows
+          if (wf < 0.5 + 0.018 + hr * 0.02 && vnoise(gx / 6, gy / 6, 93) > 0.35) { buf[o] = PAL.foam[hr < 0.5 ? 0 : 1]; continue; }
+          const dd = clamp((wf - 0.5) * 3.2 + (n1 - 0.5) * 0.5, 0, 4.4), i = Math.floor(dd), fr = clamp(dd - i + (hr - 0.5) * 0.25, 0, 1), c0 = WATERC[i], c1 = WATERC[Math.min(4, i + 1)], al = Math.round(clamp(150 - dd * 90 + (1 - clamp((wf - 0.5) / 0.08, 0, 1)) * 60, 0, 210));
+          buf[o] = (al << 24) | (Math.round(lerp(c0[2], c1[2], fr)) << 16) | (Math.round(lerp(c0[1], c1[1], fr)) << 8) | Math.round(lerp(c0[0], c1[0], fr)); continue; }
+        if (coastPx) { // land side: beach whose width wanders along the shore, wet sand at the waterline, dithered blend into the grass
+          const bw = 0.13 + vnoise(gx / 70, gy / 70, 94) * 0.3 + (vnoise(gx / 18, gy / 18, 95) - 0.5) * 0.08, bf = wf - (0.5 - bw) + (n2 - 0.5) * 0.05;
+          if (bf > 0 || (bf > -0.07 && hr < (bf + 0.07) / 0.07)) { const v = n2 + (hr - 0.5) * 0.3; let c = PAL.sand[v < 0.3 ? 3 : v < 0.62 ? 0 : v < 0.85 ? 1 : 2]; const wet = (wf - 0.47) / 0.03 + (hr - 0.5) * 0.6; if (wet > 0) c = shadeCol(c, wet > 1 ? 0.8 : 0.9); if (hr > 0.997) c = H2('#f8f0e0'); else if (hr < 0.004 && wf < 0.44) c = H2('#9a8a6a'); buf[o] = c; continue; }
+          if (t === T.SAND) shoreG = true; }
         if (wf > 0.5) {
           if (wf < 0.56 && !ocean) { col = PAL.foam[hr < 0.5 ? 0 : 1]; buf[o] = col; continue; }
           if (wf < 0.54) { col = PAL.foam[0]; buf[o] = col; continue; }
           const dd = clamp((ocean ? 0.4 : 0) + (depth > 0 ? depth * 0.45 : 0.3) + (wf - 0.5) * 2 + (n1 - 0.5) * 0.6, 0, 4.4); const i = Math.floor(dd), f = dd - i, c0 = WATERC[i], c1 = WATERC[Math.min(4, i + 1)];
           const dith = (hr - 0.5) * 0.25; const tt2 = clamp(f + dith, 0, 1);
           buf[o] = ((ocean ? Math.round(170 * clamp((1.5 - dd) / 1.0, 0, 1)) : 200) << 24) | (Math.round(lerp(c0[2], c1[2], tt2)) << 16) | (Math.round(lerp(c0[1], c1[1], tt2)) << 8) | Math.round(lerp(c0[0], c1[0], tt2)); continue; }
-        if (wf > 0.41 && t !== T.SAND && bil(sav) < 0.5) { buf[o] = PAL.bank[wf > 0.46 ? 1 : 0]; continue; }
+        if (!coastPx && wf > 0.41 && t !== T.SAND && bil(sav) < 0.5) { buf[o] = PAL.bank[wf > 0.46 ? 1 : 0]; continue; }
         const sf = bil(sv) + (n1 - 0.5) * 0.3;
         const cr = bil(q => cor[q]) + (n2 - 0.5) * 0.2 + (hr - 0.5) * 0.12, lw = bil(q => this.lawn[q]);
         if (sf > 0.5) { const row = gy >> 2, cell = hash((gx + (row & 1) * 3) >> 3, row, 6); const m = (gy & 3) === 0 || (((gx + (row & 1) * 3) & 7) === 0);
@@ -140,12 +158,12 @@ export class Renderer {
           if (w.region[k] === RG.VOLCANO) { const vd = Math.hypot(X - w.volcano.x, Z - w.volcano.z); if (w.lava && w.lava[k]) col = hr < 0.15 ? shadeCol(H2('#ffd040'), 0.95) : hr < 0.3 ? shadeCol(H2('#ff5a00'), 0.9 + hr * 0.3) : hr < 0.55 ? shadeCol(H2('#c22a00'), 0.9) : hr < 0.65 ? shadeCol(H2('#ff8a2a'), 0.85) : shadeCol(H2('#2a2628'), 0.9 + hr * 0.2); else if (vd < 10) col = shadeCol(H2('#ff6a1a'), 0.9 + hr * 0.3); else if (vd < 14) col = hr < 0.4 ? shadeCol(H2('#3a2320'), 0.9) : shadeCol(H2('#ff8a2a'), 0.8); else if (hr < 0.08) col = shadeCol(H2('#ff8a2a'), 0.8); else if (hr > 0.92) col = shadeCol(H2('#4a4448'), 0.95); else col = shadeCol(H2('#2a2628'), 0.9 + hr * 0.2); } // v0.19: lava crater + basalt, not grey stone; v0.21: lava flows (molten orange with cooling dark crust), dark crater rim, ash-grey speckle — not one flat black circle
           buf[o] = col; continue; }
         if (t === T.FARM) { const row = py % 4; col = row === 0 ? PAL.farm[3] : row === 1 ? PAL.farm[2] : PAL.farm[hr < 0.3 ? 0 : 1]; if (px === 0 || px === 15) col = PAL.farm[3]; buf[o] = col; continue; }
-        const gf = bil(gv) + (n1 - 0.5) * 0.55 + (n2 - 0.5) * 0.07;
-        const sand = bil(sav) + (n1 - 0.5) * 0.3;
+        const gf = shoreG ? 0.7 : bil(gv) + (n1 - 0.5) * 0.55 + (n2 - 0.5) * 0.07;
+        const sand = shoreG ? 0 : bil(sav) + (n1 - 0.5) * 0.3;
         const MF = this.marshField(), mf = bil(q => MF[q]), toMarsh = mf > 0.02 && mf < 0.999 && mf + (vnoise(gx / 5, gy / 5, 44) - 0.5) * 0.9 + (vnoise(gx / 1.6, gy / 1.6, 45) - 0.5) * 0.35 > 0.5; // v0.13.12: grass and swamp mud blend through a ragged dithered band, never a clean shape edge
         if (gf > 0.5 && !toMarsh) { const corr = cr > 0.5, wood = w.region[k] === RG.WOODS || w.region[k] === RG.JUNGLE, pl = corr ? PAL.cor : lw + (hr - 0.5) * 0.3 > 0.25 ? PAL.lawn : wood ? PAL.wood : PAL.grass;
-          if (gf < 0.545) col = corr ? PAL.cline : PAL.gline;
-          else { const v = vnoise(gx / 10, gy / 10, 7) * 0.8 + vnoise(gx / 4, gy / 4, 8) * 0.2 + (hr - 0.5) * 0.06; col = pl[v < 0.3 ? 4 : v < 0.45 ? 0 : v < 0.66 ? 1 : v < 0.8 ? 2 : 3]; if (gf < 0.58) col = pl[3]; }
+          if (gf < 0.545 && !coastPx) col = corr ? PAL.cline : PAL.gline;
+          else { const v = vnoise(gx / 10, gy / 10, 7) * 0.8 + vnoise(gx / 4, gy / 4, 8) * 0.2 + (hr - 0.5) * 0.06; col = pl[v < 0.3 ? 4 : v < 0.45 ? 0 : v < 0.66 ? 1 : v < 0.8 ? 2 : 3]; if (gf < 0.58 && !coastPx) col = pl[3]; }
         } else if (sand > 0.5) { const v = n2 + (hr - 0.5) * 0.3; col = PAL.sand[v < 0.3 ? 3 : v < 0.62 ? 0 : v < 0.85 ? 1 : 2]; if (((gy + (gx >> 3)) % 9 === 0) && hr < 0.6) col = PAL.sand[3]; }
         else if (w.region[k] === RG.MARSH || toMarsh) { const v = vnoise(gx / 6, gy / 6, 13) + (hr - 0.5) * 0.12; col = hr < 0.08 ? H2('#6a9a3a') : hr < 0.18 ? H2('#7a9a4a') : v < 0.3 ? H2('#2a4a22') : v < 0.55 ? H2('#3a4a2a') : v < 0.8 ? H2('#4a5a3a') : H2('#7a6a2a'); } // v0.21 swamp: murky mud, green pools, mist, reeds — not brown dirt
         else { const corr = cr > 0.82; if (corr) col = PAL.cor[hr < 0.2 ? 4 : hr < 0.7 ? 1 : 2]; else { const v = vnoise(gx / 6, gy / 6, 13) + (hr - 0.5) * 0.12; col = PAL.dirt[v < 0.25 ? 3 : v < 0.6 ? 0 : v < 0.85 ? 1 : 2];
@@ -240,7 +258,11 @@ export class Renderer {
     g.putImageData(id, 0, 0); return (this._refSrc = c); }
   seaCut() { if (this._seaCut) return this._seaCut; const w = this.w, N = 2304, c = cv(N, N), g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.drawImage(this.refSrc(), 0, 0, N, N);
     const m = cv(W, D), mg = m.getContext('2d'), im = mg.createImageData(W, D); for (let k = 0; k < W * D; k++) { const sea = w.region[k] === RG.SEA && (w.water[k] || this.tt[k] === T.WATER); im.data[k * 4 + 3] = sea ? 0 : 255; } mg.putImageData(im, 0, 0);
-    g.globalCompositeOperation = 'destination-in'; g.drawImage(m, 0, 0, N, N); g.globalCompositeOperation = 'source-over';
+    let mk = m; if (this.seaF) { const S = 4, MW = W * S, m2 = cv(MW, MW), g2 = m2.getContext('2d'), i2 = g2.createImageData(MW, MW), F = this.seaF; // v0.31: smooth noise-warped coast mask (4 px per tile) instead of the per-tile blocks
+      for (let y = 0; y < MW; y++) for (let x = 0; x < MW; x++) { const u = clamp((x + 0.5) / S - 0.5, 0, W - 1.001), v = clamp((y + 0.5) / S - 0.5, 0, D - 1.001), i = u | 0, j = v | 0, fu = u - i, fv = v - j, a = F[j * W + i], b = F[j * W + i + 1], c = F[(j + 1) * W + i], d = F[(j + 1) * W + i + 1];
+        const val = a + (b - a) * fu + (c - a) * fv + (a - b - c + d) * fu * fv + (vnoise(x / 30, y / 30, 92) - 0.5) * 0.22 + (vnoise(x / 7, y / 7, 96) - 0.5) * 0.1; i2.data[(y * MW + x) * 4 + 3] = Math.round(clamp((0.5 - val) * 14 + 0.5, 0, 1) * 255); }
+      g2.putImageData(i2, 0, 0); mk = m2; }
+    g.globalCompositeOperation = 'destination-in'; g.drawImage(mk, 0, 0, N, N); g.globalCompositeOperation = 'source-over';
     // also key out leftover navy sea pixels in the painting near the coast (where the painted coastline sits outside the game's sea tiles)
     const near = new Uint8Array(W * D), q = []; for (let k = 0; k < W * D; k++) if (im.data[k * 4 + 3] === 0) { near[k] = 1; q.push(k); }
     for (let r = 0; r < 8; r++) { const nq = []; for (const k of q) { const x = k % W, z = k / W | 0; for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const X = x + dx, Z = z + dz; if (X < 0 || Z < 0 || X >= W || Z >= D) continue; const j = Z * W + X; if (!near[j]) { near[j] = 1; nq.push(j); } } } q.length = 0; q.push(...nq); }

@@ -718,7 +718,28 @@ export class World {
     // Random lake centres are still generated (keeps the rng sequence stable) then cleared, so no random lake lands on picture land.
     lakeCs.length = 0;
     const { water: picWater, sea: picSea } = picWaterMask(); const { m: bio, dist: bioD } = picBiomeMask();
-    const picCoast = (x, z) => { for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, nz = z + dz; if (nx >= 0 && nx < W && nz >= 0 && nz < D && picWater[nz * W + nx]) return true; } return false; };
+    // v0.31 coast: (1) the painted island runs off the top of the picture, so land reached row 0 and the world border cut it in a ruler-straight line.
+    // A ragged noise-warped sea margin now runs round all four map borders. (2) The picture mask is 1 bit per tile, so sea coasts were tile staircases:
+    // the sea mask is blurred and noise-warped before thresholding, then the beach gets a noise-varied width (distance to sea) instead of a 1-tile ring.
+    { const sea0 = new Float32Array(W * D);
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const k = z * W + x, bd = Math.min(x, z, W - 1 - x, D - 1 - z), margin = 7 + n3(x * 0.03, z * 0.03, 3) * 16 + (n3(x * 0.11, z * 0.11, 2) - 0.5) * 6;
+        sea0[k] = picSea[k] || bd < margin ? 1 : 0; }
+      let f = sea0; for (let pass = 0; pass < 3; pass++) { const o = new Float32Array(W * D), R = 2; // separable box blur
+        const tmp = new Float32Array(W * D); for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { let s = 0, c = 0; for (let d = -R; d <= R; d++) { const xx = x + d; if (xx < 0 || xx >= W) { s += 1; c++; continue; } s += f[z * W + xx]; c++; } tmp[z * W + x] = s / c; }
+        for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { let s = 0, c = 0; for (let d = -R; d <= R; d++) { const zz = z + d; if (zz < 0 || zz >= D) { s += 1; c++; continue; } s += tmp[zz * W + x]; c++; } o[z * W + x] = s / c; } f = o; }
+      const MXc = Math.floor(W / 2), MZc = Math.floor(D / 2);
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const k = z * W + x; if (picWater[k] && !picSea[k]) continue; if (Math.hypot(x - MXc, z - MZc) < 45) continue; const wx = Math.max(0, Math.min(W - 1, Math.round(x + (n3(x * 0.025, z * 0.025, 3) - 0.5) * 22 + (n3(x * 0.09, z * 0.09, 2) - 0.5) * 6))), wz = Math.max(0, Math.min(D - 1, Math.round(z + (n3(x * 0.025 + 40, z * 0.025 + 17, 3) - 0.5) * 22 + (n3(x * 0.09 + 9, z * 0.09 + 5, 2) - 0.5) * 6))), v = f[wz * W + wx] + (n3(x * 0.07, z * 0.07, 3) - 0.5) * 0.3 + (n3(x * 0.23, z * 0.23, 2) - 0.5) * 0.12, isSea = sea0[k] && Math.min(x, z, W - 1 - x, D - 1 - z) < 3 ? true : v > 0.5;
+        picWater[k] = isSea ? 1 : 0; picSea[k] = isSea ? 1 : 0; }
+      // re-flood the sea from the border so any cut-off sea pocket counts as a lake, like the original mask
+      const fl = new Uint8Array(W * D), st = []; for (let i = 0; i < W * D; i++) { const x = i % W, z = (i / W) | 0; if ((x === 0 || z === 0 || x === W - 1 || z === D - 1) && picSea[i]) { fl[i] = 1; st.push(i); } }
+      while (st.length) { const i = st.pop(), x = i % W, z = (i / W) | 0; for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, nz = z + dz; if (nx < 0 || nz < 0 || nx >= W || nz >= D) continue; const q = nz * W + nx; if (picSea[q] && !fl[q]) { fl[q] = 1; st.push(q); } } }
+      for (let i = 0; i < W * D; i++) picSea[i] = fl[i]; }
+    // distance (tiles) from every land tile to the open sea, for a beach that widens and narrows along the shore
+    const seaDist = new Float32Array(W * D); { for (let i = 0; i < W * D; i++) seaDist[i] = picSea[i] ? 0 : 1e3;
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const i = z * W + x; let d = seaDist[i]; if (!d) continue; if (x) d = Math.min(d, seaDist[i - 1] + 1); if (z) d = Math.min(d, seaDist[i - W] + 1); if (x && z) d = Math.min(d, seaDist[i - W - 1] + 1.41); if (z && x < W - 1) d = Math.min(d, seaDist[i - W + 1] + 1.41); seaDist[i] = d; }
+      for (let z = D - 1; z >= 0; z--) for (let x = W - 1; x >= 0; x--) { const i = z * W + x; let d = seaDist[i]; if (!d) continue; if (x < W - 1) d = Math.min(d, seaDist[i + 1] + 1); if (z < D - 1) d = Math.min(d, seaDist[i + W] + 1); if (x < W - 1 && z < D - 1) d = Math.min(d, seaDist[i + W + 1] + 1.41); if (x && z < D - 1) d = Math.min(d, seaDist[i + W - 1] + 1.41); seaDist[i] = d; } }
+    this.seaDist = seaDist;
+    const picCoast = (x, z) => { const k = z * W + x; if (seaDist[k] < 1e3 && seaDist[k] <= 1.2 + n3(x * 0.045, z * 0.045, 3) * 3.6 + (n3(x * 0.2, z * 0.2, 2) - 0.5) * 1.2) return true; for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, nz = z + dz; if (nx >= 0 && nx < W && nz >= 0 && nz < D && picWater[nz * W + nx] && !picSea[nz * W + nx]) return true; } return false; };
     this.regionSeeds = [...lakeCs.map(L => ({ k: RG.LAKE, x: L.x, z: L.z, R: L.R })), { k: RG.RUINS, x: ruinsC.x, z: ruinsC.z }];
     this.region = new Uint8Array(W * D); this.lava = new Uint8Array(W * D); this.coast = new Float32Array(W * D);
     const moist = (x, z) => 0.5 * n5(x * 0.006, z * 0.006, 4) + 0.5 * n6(x * 0.04, z * 0.04, 3); // v0.17b: equal low/high moisture so woods/meadow/marsh repeat in smaller patches across the map instead of one big patch per type
@@ -759,6 +780,8 @@ export class World {
     }
     // v0.13.12: soften the ground step between swamp and meadow/woods so zone borders are gentle slopes, not a dark cliff outline tracing a shape
     { const SOFT = new Set([RG.MARSH, RG.MEADOW, RG.WOODS, RG.RUINS]); for (let pass = 0; pass < 3; pass++) { const src = hm.slice(); for (let z = 3; z < D - 3; z++) for (let x = 3; x < W - 3; x++) { const k = z * W + x; if (!SOFT.has(this.region[k]) || src[k] < WATER) continue; let sum = 0, n = 0; for (let dz = -3; dz <= 3; dz++) for (let dx = -3; dx <= 3; dx++) { const q = k + dz * W + dx; if (!SOFT.has(this.region[q]) || src[q] < WATER) continue; sum += src[q]; n++; } if (n) hm[k] = Math.max(WATER + 0.3, sum / n); } } }
+    // v0.31: gentle ramp up from the sea (after the smoothing pass, which would otherwise lift it back), so there's no cliff/rock line where sand meets grass
+    for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const k = z * W + x, sd = seaDist[k]; if (sd > 0 && sd < 16 && hm[k] >= WATER) hm[k] = Math.min(hm[k], WATER + 0.6 + sd * (0.35 + n3(x * 0.05, z * 0.05, 2) * 0.3)); }
     // lakes: carve a small bowl with an islet around each lake centre (user likes little lakes)
     this.lakes = [];
     for (const s of this.regionSeeds) if (s.k === RG.LAKE) { const R = s.R; this.lakes.push({ x: Math.round(s.x), z: Math.round(s.z), R });

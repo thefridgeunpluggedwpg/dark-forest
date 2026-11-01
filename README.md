@@ -1,5 +1,6 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+- **v0.13.15**: natural coastlines: no straight cut-off at the north edge, no stair-stepped shores; curving ragged coasts with beaches that vary in width and blend into grass and shallows.
 - **v0.13.14**: no more purple in the Haunted Heart: it now uses the same forest texture as the surrounding woods, darker and more dead, with a ragged blended edge.
 - **v0.13.13**: water gets soft rolling swells (light crests, darker troughs, slow drift) in place of the white flecks.
 - **v0.13.12**: no round zone shapes: meadow/swamp borders are noise-warped, the ground step between them is smoothed, and grass fades into swamp mud through a wide ragged band.
