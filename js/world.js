@@ -21,7 +21,7 @@ def(B.TORCH,22,22,22,{walk:false,opaque:false,torch:true,glow:1});
 def(B.GATE,23,23,23,{opaque:false,cutout:true}); def(B.THATCH,24); def(B.FARM,25,2,2); def(B.CHEST,27,26,26); def(B.MOSS,28,10,10);
 export { DEF };
 // v0.13.7: the 83 Kingsway grounds path, a winding crushed-limestone loop around the mansion (shared by the renderer and Tumnus's parade)
-export const LOOP = { rx: 17, rz: 15.5, oz: 3, hw: 0.95, f: th => 1 + 0.07 * Math.sin(3 * th + 0.7) + 0.045 * Math.sin(5 * th + 2.1) + 0.03 * Math.sin(2 * th + 4) };
+export const LOOP = { rx: 20.5, rz: 20, oz: 1.5, p: 3.5, hw: 0.95, f: th => 1 + 0.035 * Math.sin(3 * th + 0.7) + 0.025 * Math.sin(5 * th + 2.1) + 0.015 * Math.sin(2 * th + 4), pt(th) { const c = Math.cos(th), s = Math.sin(th), n = Math.pow(Math.pow(Math.abs(c), this.p) + Math.pow(Math.abs(s), this.p), 1 / this.p), k = this.f(th) / n; return [this.rx * k * c, this.oz + this.rz * k * s]; } }; /* v0.13.7b: rounded-square winding loop that runs OUTSIDE the front/back iron fences (2.5 tiles clear) */
 
 const PICWATER_B64 = [
   '///////////////////////////////////////////////////////////AAAAAAAAAAAAA////////',

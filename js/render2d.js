@@ -29,7 +29,7 @@ const WATERC = [[76, 196, 196], [52, 168, 186], [38, 140, 172], [28, 112, 152], 
 // scale a packed rgb() colour by f (r in low byte, b in high byte, as rgb() packs it)
 const shadeCol = (c, f) => (255 << 24) | (Math.min(255, Math.round((c >> 16 & 255) * f)) << 16) | (Math.min(255, Math.round((c >> 8 & 255) * f)) << 8) | Math.min(255, Math.round((c & 255) * f));
 // v0.13.7: distance (in tiles, approx) from world point to the grounds path centreline; >0 outside the path band
-function loopD(M, wx, wz) { const u = (wx - M.cx - 0.5) / LOOP.rx, v = (wz - M.cz - 0.5 - LOOP.oz) / LOOP.rz; if (u * u + v * v > 2.2 || u * u + v * v < 0.5) return 99; const th = Math.atan2(v, u); return Math.abs(Math.hypot(u, v) - LOOP.f(th)) * 16; }
+function loopD(M, wx, wz) { const u = (wx - M.cx - 0.5) / LOOP.rx, v = (wz - M.cz - 0.5 - LOOP.oz) / LOOP.rz, P_ = LOOP.p, rho = Math.pow(Math.pow(Math.abs(u), P_) + Math.pow(Math.abs(v), P_), 1 / P_); if (rho > 1.3 || rho < 0.75) return 99; return Math.abs(rho - LOOP.f(Math.atan2(v, u))) * 20; }
 export class Renderer {
   constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d', { alpha: false }); this.chunks = new Map(); this.objs = new Map(); this.spr = new Map(); this.parts = []; this.showLabels = true; this.t = 0;
     this.light = cv(8, 8); this.lctx = this.light.getContext('2d'); this.glowC = {};
@@ -66,10 +66,9 @@ export class Renderer {
     
     for (let i = 0; i < 16; i++) { const side = i < 8 ? -1 : 1, j = i % 8; this.decor.push({ t: 'topiary', x: mx + side * (2.6 + (j % 4) * 0.75 + (j > 3 ? 0.35 : 0)), z: M.z1 + 3.2 + (j > 3 ? 0.7 : 0) + hash(i, 3, 3) * 0.2, v: i }); }
     this.decor.push({ t: 'kingslamp', x: mx + 4.4, z: M.pz1 + 1.6 }); this.decor.push({ t: 'yard', x: mx + 3.2, z: M.pz1 + 2.4 }); for (let i = 0; i < 10; i++) this.decor.push({ t: 'lav', x: mx + 0.5 + (i < 5 ? -1 : 1) * (5.6 + (i % 5) * 0.9), z: M.z1 + 2.4 + hash(i, 5, 5) * 0.8, v: i }); this.decor.push({ t: 'pumpkin', x: mx - 6.5, z: M.z1 + 3.3, v: 1 });
-    for (let x = M.px0 - 4; x <= M.px1 + 4; x++) { if (Math.abs(x + 0.5 - (mx)) < 3) continue; this.decor.push({ t: 'fence', x: x + 0.5, z: M.pz1 + 5 }); }
-    for (let x = M.px0 - 4; x <= M.px1 + 4; x++) this.decor.push({ t: 'fence', x: x + 0.5, z: M.pz0 - 4 });
+    /* v0.13.7b: estate iron fences removed per Kyler */
     // v0.13.6 estate garden + BlackCard University entrance sign (render-only props, no collision, clear of the path/lamps)
-    /* v0.13.7: Narnia lamps along the winding limestone path (outer edge), skipping the front bridge */ for (let i = 0; i < 10; i++) { const th = i * Math.PI / 5 + 0.31, f = LOOP.f(th), lx = mx + 0.5 + (LOOP.rx * f + 1.4) * Math.cos(th), lz = mz + 0.5 + LOOP.oz + (LOOP.rz * f + 1.4) * Math.sin(th); if (Math.abs(lx - mx - 0.5) < 4 && lz > mz) continue; this.decor.push({ t: 'kingslamp', x: lx, z: lz }); }
+    /* v0.13.7: Narnia lamps along the winding limestone path (outer edge), skipping the front bridge */ for (let i = 0; i < 10; i++) { const th = i * Math.PI / 5 + 0.31, q = LOOP.pt(th), qd = Math.hypot(q[0], q[1] - LOOP.oz), lx = mx + 0.5 + q[0] * (1 + 1.4 / qd), lz = mz + 0.5 + LOOP.oz + (q[1] - LOOP.oz) * (1 + 1.4 / qd); if (Math.abs(lx - mx - 0.5) < 4 && lz > mz) continue; this.decor.push({ t: 'kingslamp', x: lx, z: lz }); }
     this.decor.push({ t: 'bcsign', x: mx - 5.2, z: M.pz1 + 7.6 });
     this.decor.push({ t: 'fountain', x: mx + 11.2, z: M.z1 + 5.2 }); this.decor.push({ t: 'fbed', x: mx - 10.8, z: M.z1 + 6.6, v: 0 }); this.decor.push({ t: 'fbed', x: mx + 8.6, z: M.z1 + 7.6, v: 1 });
     for (const sd of [-1, 1]) for (let i = 0; i < 4; i++) this.decor.push({ t: 'hedge', x: mx + 0.5 + sd * (4.4 + i * 1.9), z: M.pz1 + 3.9 });
@@ -88,7 +87,7 @@ export class Renderer {
     else if (w.region[k] === RG.MARSH) t = T.DIRT; // v0.21: swamp ground is murky dirt in close-up, not beach sand — the murky palette is in bake()
     else if (sb === B.SAND) t = T.SAND; else if (sb === B.STONE || sb === B.COBBLE || sb === B.MOSS) t = T.STONE; else if (sb === B.FARM) t = T.FARM;
     else if (sb === B.GRASS) { t = T.GRASS; const rg = w.region[k]; gs = 0.3 + 0.8 * vnoise(x / 7, z / 7, 5) + (rg === RG.WOODS ? 0.3 : rg === RG.MEADOW ? 0.1 : 0); for (const tr of this.sim.tribes) { const d = Math.hypot(x - tr.cx, z - tr.cz); if (d < 4) gs -= (4 - d) * 0.25; } }
-    /* v0.13.6: lawn is an organic noise-warped blob that fades into the haunted ground, not a hard rectangle */ const ex = (x + 0.5 - M.cx) / 20, ez = (z + 0.5 - M.cz - 2.5) / 15.5, e = Math.hypot(ex, ez) + (vnoise(x / 4, z / 4, 71) - 0.5) * 0.45 + (vnoise(x / 1.7, z / 1.7, 72) - 0.5) * 0.12, lf = clamp((1.12 - e) / 0.22, 0, 1), inLawn = lf > 0.5; this.lawn[k] = lf; if (lf > 0.3 && t === T.GRASS) gs = Math.max(gs, 0.6 + 0.6 * lf); this.tt[k] = t; this.gs[k] = gs; const dm = Math.hypot(x - M.cx, z - M.cz); this.cor[k] = clamp((44 - dm) / 14 + (vnoise(x / 6, z / 6, 9) - 0.5) * 0.9, 0, 1) * (1 - lf) * (1 - lf);
+    /* v0.13.6: lawn is an organic noise-warped blob that fades into the haunted ground, not a hard rectangle */ const ex = (x + 0.5 - M.cx) / 24.5, ez = (z + 0.5 - M.cz - 1.5) / 23.5, /* v0.13.7b: lawn grown so the outer path still borders grass */ e = Math.hypot(ex, ez) + (vnoise(x / 4, z / 4, 71) - 0.5) * 0.45 + (vnoise(x / 1.7, z / 1.7, 72) - 0.5) * 0.12, lf = clamp((1.12 - e) / 0.22, 0, 1), inLawn = lf > 0.5; this.lawn[k] = lf; if (lf > 0.3 && t === T.GRASS) gs = Math.max(gs, 0.6 + 0.6 * lf); this.tt[k] = t; this.gs[k] = gs; const dm = Math.hypot(x - M.cx, z - M.cz); this.cor[k] = clamp((44 - dm) / 14 + (vnoise(x / 6, z / 6, 9) - 0.5) * 0.9, 0, 1) * (1 - lf) * (1 - lf);
   }
   // ------------------------------------------------------------------ ground chunk baking
   bake(cx, cz) {

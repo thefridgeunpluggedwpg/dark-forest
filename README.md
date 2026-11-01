@@ -1,5 +1,8 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+## v0.13.8
+- The estate iron fences are removed, and the winding limestone path now loops wider around the grounds (with a bigger lawn) so it never cuts through anything. Lamps and Tumnus's route follow it. Cache dark-forest-v40.
+
 ## v0.13.7
 - Night fog is clearly translucent (not barely there) and situational: it gathers around the mansion, and on foggy nights large low fog banks drift across other zones (always some in the swamp, light at dawn, thinned in storms).
 - The dashed purple outline around the mansion grounds is gone (soft shade kept).

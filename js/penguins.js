@@ -73,7 +73,7 @@ export const PenguinMixin = {
         const v = this.vamps().filter(v => v.hp > 45 && v.state !== 'retreat').sort((a, b) => dist(a.x, a.z, e.x, e.z) - dist(b.x, b.z, e.x, e.z))[0]; if (!v) break; v.assign = { type: 'hunt', e, fx: 0, fz: 0 }; e.spottedAt = this.tick; T.cool = this.tick + 300; T.snitches = (T.snitches || 0) + 1; T.snitchAt = this.tick; this.pstats.snitchSpots++; v.alert = this.tick;
         this.log(`Ian Tumnus spotted ${e.exile ? 'exile ' : ''}${e.name}${this.ofV(e)} ${this.placeName(e.x, e.z)} on his rounds and snitched to ${v.name}.`, 'vamp'); break; } }
     // default: parade the 83 Kingsway grounds in a loop (gardens, gate, perimeter) — and inspect remotely from it
-    const WP = Array.from({ length: 16 }, (_, i) => { const th = Math.PI / 2 - i * Math.PI / 8, f = LOOP.f(th); return [LOOP.rx * f * Math.cos(th), LOOP.oz + LOOP.rz * f * Math.sin(th)]; }); /* v0.13.7: follows the winding limestone path */ T.state = 'parading the grounds';
+    const WP = Array.from({ length: 20 }, (_, i) => LOOP.pt(Math.PI / 2 - i * Math.PI / 10)); /* v0.13.7: follows the winding limestone path */ T.state = 'parading the grounds';
     const wp = WP[(T.wp || 0) % WP.length]; if (this.moveTo(T, m.x + wp[0], m.z + wp[1], 0.17, 1.4) || ++T.wpt > 400) { T.wpt = 0; T.wp = (T.wp || 0) + 1; if (T.wp % WP.length === 0) { T.laps = (T.laps || 0) + 1;
       if (T.laps % 2 === 0) this.remoteInspect(T); } } },
   // v0.13: Tumnus never leaves the grounds. His inspections are remote and randomized — from the parade loop he
