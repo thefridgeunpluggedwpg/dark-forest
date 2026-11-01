@@ -141,11 +141,12 @@ export class Renderer {
         if (t === T.FARM) { const row = py % 4; col = row === 0 ? PAL.farm[3] : row === 1 ? PAL.farm[2] : PAL.farm[hr < 0.3 ? 0 : 1]; if (px === 0 || px === 15) col = PAL.farm[3]; buf[o] = col; continue; }
         const gf = bil(gv) + (n1 - 0.5) * 0.55 + (n2 - 0.5) * 0.07;
         const sand = bil(sav) + (n1 - 0.5) * 0.3;
-        if (gf > 0.5) { const corr = cr > 0.5, wood = w.region[k] === RG.WOODS || w.region[k] === RG.JUNGLE, pl = corr ? PAL.cor : lw + (hr - 0.5) * 0.3 > 0.25 ? PAL.lawn : wood ? PAL.wood : PAL.grass;
+        const MF = this.marshField(), mf = bil(q => MF[q]), toMarsh = mf > 0.02 && mf < 0.999 && mf + (vnoise(gx / 5, gy / 5, 44) - 0.5) * 0.9 + (vnoise(gx / 1.6, gy / 1.6, 45) - 0.5) * 0.35 > 0.5; // v0.13.12: grass and swamp mud blend through a ragged dithered band, never a clean shape edge
+        if (gf > 0.5 && !toMarsh) { const corr = cr > 0.5, wood = w.region[k] === RG.WOODS || w.region[k] === RG.JUNGLE, pl = corr ? PAL.cor : lw + (hr - 0.5) * 0.3 > 0.25 ? PAL.lawn : wood ? PAL.wood : PAL.grass;
           if (gf < 0.545) col = corr ? PAL.cline : PAL.gline;
           else { const v = vnoise(gx / 10, gy / 10, 7) * 0.8 + vnoise(gx / 4, gy / 4, 8) * 0.2 + (hr - 0.5) * 0.06; col = pl[v < 0.3 ? 4 : v < 0.45 ? 0 : v < 0.66 ? 1 : v < 0.8 ? 2 : 3]; if (gf < 0.58) col = pl[3]; }
         } else if (sand > 0.5) { const v = n2 + (hr - 0.5) * 0.3; col = PAL.sand[v < 0.3 ? 3 : v < 0.62 ? 0 : v < 0.85 ? 1 : 2]; if (((gy + (gx >> 3)) % 9 === 0) && hr < 0.6) col = PAL.sand[3]; }
-        else if (w.region[k] === RG.MARSH) { const v = vnoise(gx / 6, gy / 6, 13) + (hr - 0.5) * 0.12; col = hr < 0.08 ? H2('#6a9a3a') : hr < 0.18 ? H2('#7a9a4a') : v < 0.3 ? H2('#2a4a22') : v < 0.55 ? H2('#3a4a2a') : v < 0.8 ? H2('#4a5a3a') : H2('#7a6a2a'); } // v0.21 swamp: murky mud, green pools, mist, reeds — not brown dirt
+        else if (w.region[k] === RG.MARSH || toMarsh) { const v = vnoise(gx / 6, gy / 6, 13) + (hr - 0.5) * 0.12; col = hr < 0.08 ? H2('#6a9a3a') : hr < 0.18 ? H2('#7a9a4a') : v < 0.3 ? H2('#2a4a22') : v < 0.55 ? H2('#3a4a2a') : v < 0.8 ? H2('#4a5a3a') : H2('#7a6a2a'); } // v0.21 swamp: murky mud, green pools, mist, reeds — not brown dirt
         else { const corr = cr > 0.82; if (corr) col = PAL.cor[hr < 0.2 ? 4 : hr < 0.7 ? 1 : 2]; else { const v = vnoise(gx / 6, gy / 6, 13) + (hr - 0.5) * 0.12; col = PAL.dirt[v < 0.25 ? 3 : v < 0.6 ? 0 : v < 0.85 ? 1 : 2];
           // stippled cobble patches (reference look)
           if (vnoise(gx / 40, gy / 40, 11) > 0.6) { const cxl = gx % 5, cyl = gy % 4, ch = hash(gx / 5 | 0, gy / 4 | 0, 12); if (ch < 0.55) { if (cyl === 3 && cxl < 4) col = PAL.dirt[4]; else if (cyl < 3 && cxl < 4) col = cyl === 0 ? PAL.dirt[2] : PAL.dirt[1]; } } } }
@@ -231,6 +232,10 @@ export class Renderer {
     for (let r = 0; r < 8; r++) { const nq = []; for (const k of q) { const x = k % W, z = k / W | 0; for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const X = x + dx, Z = z + dz; if (X < 0 || Z < 0 || X >= W || Z >= D) continue; const j = Z * W + X; if (!near[j]) { near[j] = 1; nq.push(j); } } } q.length = 0; q.push(...nq); }
     const id = g.getImageData(0, 0, N, N), d = id.data, sc = W / N; for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { if (!near[(y * sc | 0) * W + (x * sc | 0)]) continue; const o = (y * N + x) * 4; if (!d[o + 3]) continue; const R = d[o], G = d[o + 1], B = d[o + 2], blu = B - Math.max(R, G * 0.85); if (blu > 18 && R < 90) { const a = clamp((blu - 18) / 30, 0, 1); d[o + 3] = d[o + 3] * (1 - a); } }
     g.putImageData(id, 0, 0); return (this._seaCut = c); }
+  // v0.13.12: soft swamp-proximity field (box-blurred, radius 4) so the grass/swamp blend band is several tiles wide and wanders
+  marshField() { if (this._mf) return this._mf; const w = this.w; let a = new Float32Array(W * D); for (let k = 0; k < W * D; k++) a[k] = w.region[k] === RG.MARSH ? 1 : 0; const r = 4;
+    for (let pass = 0; pass < 2; pass++) { const b = new Float32Array(W * D); for (let z = 0; z < D; z++) { let acc = 0; for (let x = -r; x < W + r; x++) { if (x + r < W) acc += a[z * W + x + r]; if (x - r - 1 >= 0) acc -= a[z * W + x - r - 1]; if (x >= 0 && x < W) b[z * W + x] = acc / (2 * r + 1); } } const c = new Float32Array(W * D); for (let x = 0; x < W; x++) { let acc = 0; for (let z = -r; z < D + r; z++) { if (z + r < D) acc += b[(z + r) * W + x]; if (z - r - 1 >= 0) acc -= b[(z - r - 1) * W + x]; if (z >= 0 && z < D) c[z * W + x] = acc / (2 * r + 1); } } a = c; }
+    return (this._mf = a); }
   overview() { if (this.ov && !this.ovDirty) return this.ov; const c = this.ov || cv(W, D), g = c.getContext('2d'), img = g.createImageData(W, D), b = new Uint32Array(img.data.buffer);
     for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const k = z * W + x, t = this.tt[k], cr = this.cor[k] > 0.55; let col;
       if (t === T.WATER && this.w.region[k] === RG.SEA) { b[k] = 0; continue; } if (t === T.WATER) { const d = clamp((this.w.region[k] === RG.SEA ? 2.5 : 0) + (WATER - this.w.ground[k]) * 0.45, 0, 4); const q = WATERC[Math.round(d)]; col = rgb(q[0], q[1], q[2]); }

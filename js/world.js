@@ -741,7 +741,7 @@ export class World {
       let isFlow = false; { const dx = x - this.volcano.x, dz = z - this.volcano.z; for (const f of this.volcanoFlows) { const t = dx * f.ca + dz * f.sa, perp = Math.abs(-dx * f.sa + dz * f.ca); if (t > this.volcano.R * 0.2 && t < this.volcano.R * 1.7 && perp < 3 + t * 0.08) { isFlow = true; break; } } }
       if (isFlow) this.lava[k] = 1;
       // v0.13: biome comes from the painted far map, so zooming in shows what the picture shows at that spot.
-      { const bv = bio[k], bd = bioD[k]; h = 13 + Math.pow(e, 1.3) * 10; this.lava[k] = 0;
+      { /* v0.13.12: biome edges between meadow/woods/swamp are noise-warped so no zone has a round or smooth geometric border (Kyler: no circles in nature) */ const HARD = v => v === 5 || v === 8 || v === 9 || v === 10 || v === 11 || v === 12; let kb = k; if (!HARD(bio[k])) { const wx = Math.max(0, Math.min(W - 1, Math.round(x + (n3(x * 0.035, z * 0.035, 7) - 0.5) * 34 + (n3(x * 0.14, z * 0.14, 8) - 0.5) * 10))), wz = Math.max(0, Math.min(D - 1, Math.round(z + (n3(x * 0.035, z * 0.035, 9) - 0.5) * 34 + (n3(x * 0.14, z * 0.14, 6) - 0.5) * 10))), q = wz * W + wx; if (!HARD(bio[q])) kb = q; } const bv = bio[kb], bd = bioD[kb]; h = 13 + Math.pow(e, 1.3) * 10; this.lava[k] = 0;
         if (bv === 8) best = RG.HAUNT;
         else if (bv === 9 || bv === 12) { best = RG.VOLCANO; h = 18 + Math.min(bd, 22) * 0.9 + n3(x * 0.08, z * 0.08, 3) * 3; if (bv === 12) this.lava[k] = 1; }
         else if (bv === 5 || bv === 11) { best = RG.HIGH; h = 20 + Math.min(bd, 14) * (bv === 11 ? 1.5 : 1.15) + n3(x * 0.07, z * 0.07, 3) * 3; h = bv === 11 ? Math.max(h, 33) : Math.min(h, 31.4); } // grey peaks stay under the snow line (render paints h>32 white)
@@ -757,6 +757,8 @@ export class World {
       if (picWater[k]) { best = picSea[k] ? RG.SEA : RG.LAKE; h = WATER - 1; } // v0.30: inland picture water is a lake, not open sea; outer picture water is sea. Either way it stays water, never land/trees.
       hm[k] = h; this.region[k] = best;
     }
+    // v0.13.12: soften the ground step between swamp and meadow/woods so zone borders are gentle slopes, not a dark cliff outline tracing a shape
+    { const SOFT = new Set([RG.MARSH, RG.MEADOW, RG.WOODS, RG.RUINS]); for (let pass = 0; pass < 3; pass++) { const src = hm.slice(); for (let z = 3; z < D - 3; z++) for (let x = 3; x < W - 3; x++) { const k = z * W + x; if (!SOFT.has(this.region[k]) || src[k] < WATER) continue; let sum = 0, n = 0; for (let dz = -3; dz <= 3; dz++) for (let dx = -3; dx <= 3; dx++) { const q = k + dz * W + dx; if (!SOFT.has(this.region[q]) || src[q] < WATER) continue; sum += src[q]; n++; } if (n) hm[k] = Math.max(WATER + 0.3, sum / n); } } }
     // lakes: carve a small bowl with an islet around each lake centre (user likes little lakes)
     this.lakes = [];
     for (const s of this.regionSeeds) if (s.k === RG.LAKE) { const R = s.R; this.lakes.push({ x: Math.round(s.x), z: Math.round(s.z), R });
