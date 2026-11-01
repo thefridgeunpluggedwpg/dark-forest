@@ -34,7 +34,7 @@ export class Renderer {
   constructor(canvas) { this.canvas = canvas; this.ctx = canvas.getContext('2d', { alpha: false }); this.chunks = new Map(); this.objs = new Map(); this.spr = new Map(); this.parts = []; this.showLabels = true; this.t = 0;
     this.light = cv(8, 8); this.lctx = this.light.getContext('2d'); this.glowC = {};
     for (const [k, c] of Object.entries({ warm: [255, 170, 80], red: [255, 40, 40], cool: [150, 190, 255], green: [200, 255, 120], purple: [190, 110, 255] })) { const g = cv(64, 64), x = g.getContext('2d'), gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, `rgba(${c},1)`); gr.addColorStop(0.35, `rgba(${c},.55)`); gr.addColorStop(1, `rgba(${c},0)`); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); this.glowC[k] = g; }
-    this.ripple = this.makeRipple(0); this.ripple2 = this.makeRipple(1); this.fogTex = this.makeFog();
+    this.waterBase = this.makeRipple(0); this.ripple = this.makeRipple(1); this.ripple2 = this.makeRipple(2); this.fogTex = this.makeFog();
     this.lod = { thronglet: [], stefan: [], penguin: [], tumnus: [], guard: [] }; for (const [n, hs] of [['thronglet', [24, 48, 96, 192]], ['stefan', [32, 64, 128, 256]], ['penguin', [24, 48, 96, 192]], ['tumnus', [24, 48, 96, 192]], ['guard', [24, 48, 96, 192]]]) for (const h of [...hs, 'full']) { const im = new Image(); im.onload = () => { this.lod[n].push(im); this.lod[n].sort((a, b) => a.height - b.height); }; im.src = `assets/${n}${h === 'full' ? '' : '_' + h}.png`; }
     // v0.15: 8-directional idle sprites, cropped to opaque bbox, with LODs. dir = atan2(dx, dz): 0 = south, PI/2 = east, PI = north.
     // v0.21 terrain detail: landmark pictures cut (with Kyler's permission) from his own Grok Imagine reference island (26875_7_647f.jpg), masked to an ellipse so they blend into the ground instead of showing a rectangle. Drawn over the ground in render(), so they appear in both close and far views, under characters.
@@ -46,7 +46,13 @@ export class Renderer {
   dirFor(e) { const dirs = ['south', 'south-east', 'east', 'north-east', 'north', 'north-west', 'west', 'south-west']; return dirs[((Math.round((e.dir || 0) / (Math.PI / 4)) % 8) + 8) % 8]; }
   pickDir(key, e, px) { const L = (this.dirLod[key] || {})[this.dirFor(e)] || []; const ready = L.filter(im => im.complete && im.naturalWidth); if (!ready.length) return null; for (const im of ready) if (im.height >= px) return im; return ready[ready.length - 1]; }
   S(key, fn) { let c = this.spr.get(key); if (!c) { c = fn(); this.spr.set(key, c); } return c; }
-  makeRipple(v) { const c = cv(64, 64), g = c.getContext('2d'); for (let i = 0; i < 26; i++) { const x = hash(i, v, 3) * 64 | 0, y = hash(i, v, 4) * 64 | 0, w = 3 + hash(i, v, 5) * 6 | 0; g.fillStyle = v ? 'rgba(200,250,250,.55)' : 'rgba(150,230,235,.6)'; g.fillRect(x, y, w, 1); if (w > 5) g.fillRect(x + 1, y - 1, w - 3, 1); } return c; }
+  // v0.13.10: realistic water. Tileable 256px textures built from integer-frequency sine waves (so they wrap seamlessly): v=0 base colour with slow depth mottling, v=1/2 soft wave-crest highlights that cross each other as they drift
+  makeRipple(v) { const N = 256, c = cv(N, N), g = c.getContext('2d'), im = g.createImageData(N, N), d = im.data, T2 = Math.PI * 2 / N;
+    const waves = v === 0 ? [[1, 2, 0.3, 1], [3, -1, 1.7, 0.6], [-2, 3, 4.1, 0.45], [5, 4, 2.2, 0.25]] : v === 1 ? [[6, 2, 0.5, 1], [9, -3, 2.3, 0.55], [14, 5, 4.4, 0.3], [-4, 11, 1.1, 0.35]] : [[-5, 7, 3.1, 1], [8, 9, 0.9, 0.5], [-13, 4, 5.2, 0.3], [11, -10, 2.6, 0.25]];
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let f = 0, wsum = 0; for (const [a, b, ph, w] of waves) { f += Math.sin((a * x + b * y) * T2 + ph + 0.8 * Math.sin((b * x - a * y) * T2 * 0.5 + ph)) * w; wsum += w; } f /= wsum; const o = (y * N + x) * 4;
+      if (v === 0) { const t = f * 0.5 + 0.5; d[o] = 26 + t * 18; d[o + 1] = 112 + t * 36; d[o + 2] = 140 + t * 30; d[o + 3] = 255; }
+      else { const cr = Math.max(0, (f - 0.55) / 0.45), a = cr * cr * (3 - 2 * cr); d[o] = 215; d[o + 1] = 245; d[o + 2] = 250; d[o + 3] = a * (v === 1 ? 70 : 50); } }
+    g.putImageData(im, 0, 0); return c; }
   makeFog() { const c = cv(96, 96), g = c.getContext('2d'), d = g.createImageData(96, 96); for (let y = 0; y < 96; y++) for (let x = 0; x < 96; x++) { const f = (a, b, s) => { let t = 0; for (const [fr, am] of [[a, 0.6], [b, 0.4]]) { const X = x / 96 * fr, Y = y / 96 * fr; t += am * tileN(X, Y, fr, s); } return t; }; const v = clamp((f(4, 8, 1) - 0.42) * 2.2, 0, 1); const i = (y * 96 + x) * 4; d.data[i] = d.data[i + 1] = d.data[i + 2] = 255; d.data[i + 3] = v * 255; } g.putImageData(d, 0, 0); return c; }
   // ------------------------------------------------------------------ world setup
   setWorld(world, sim) {
@@ -113,9 +119,9 @@ export class Renderer {
         if (wf > 0.5) {
           if (wf < 0.56 && !ocean) { col = PAL.foam[hr < 0.5 ? 0 : 1]; buf[o] = col; continue; }
           if (wf < 0.54) { col = PAL.foam[0]; buf[o] = col; continue; }
-          const dd = clamp((ocean ? 2.5 : 0) + (depth > 0 ? depth * 0.45 : 0.3) + (wf - 0.5) * 2 + (n1 - 0.5) * 0.6, 0, 4.4); const i = Math.floor(dd), f = dd - i, c0 = WATERC[i], c1 = WATERC[Math.min(4, i + 1)];
+          const dd = clamp((ocean ? 0.4 : 0) + (depth > 0 ? depth * 0.45 : 0.3) + (wf - 0.5) * 2 + (n1 - 0.5) * 0.6, 0, 4.4); const i = Math.floor(dd), f = dd - i, c0 = WATERC[i], c1 = WATERC[Math.min(4, i + 1)];
           const dith = (hr - 0.5) * 0.25; const tt2 = clamp(f + dith, 0, 1);
-          buf[o] = (200 << 24) | (Math.round(lerp(c0[2], c1[2], tt2)) << 16) | (Math.round(lerp(c0[1], c1[1], tt2)) << 8) | Math.round(lerp(c0[0], c1[0], tt2)); continue; }
+          buf[o] = ((ocean ? Math.round(170 * clamp((1.5 - dd) / 1.0, 0, 1)) : 200) << 24) | (Math.round(lerp(c0[2], c1[2], tt2)) << 16) | (Math.round(lerp(c0[1], c1[1], tt2)) << 8) | Math.round(lerp(c0[0], c1[0], tt2)); continue; }
         if (wf > 0.41 && t !== T.SAND && bil(sav) < 0.5) { buf[o] = PAL.bank[wf > 0.46 ? 1 : 0]; continue; }
         const sf = bil(sv) + (n1 - 0.5) * 0.3;
         const cr = bil(q => cor[q]) + (n2 - 0.5) * 0.2 + (hr - 0.5) * 0.12, lw = bil(q => this.lawn[q]);
@@ -216,9 +222,18 @@ export class Renderer {
   }
   chunk(cx, cz, allowBuild) { const k = cx + ',' + cz; let c = this.chunks.get(k); if (c) { this.chunks.delete(k); this.chunks.set(k, c); return c; } if (!allowBuild) return null;
     c = this.bake(cx, cz); this.chunks.set(k, c); while (this.chunks.size > 90) this.chunks.delete(this.chunks.keys().next().value); return c; }
+  // v0.13.10: far-zoom painting with its dark navy sea cut out (soft edge), so the game's animated water shows through and matches the water outside the map
+  seaCut() { if (this._seaCut) return this._seaCut; const w = this.w, N = 2304, c = cv(N, N), g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.drawImage(this.refFull, 0, 0, N, N);
+    const m = cv(W, D), mg = m.getContext('2d'), im = mg.createImageData(W, D); for (let k = 0; k < W * D; k++) { const sea = w.region[k] === RG.SEA && (w.water[k] || this.tt[k] === T.WATER); im.data[k * 4 + 3] = sea ? 0 : 255; } mg.putImageData(im, 0, 0);
+    g.globalCompositeOperation = 'destination-in'; g.drawImage(m, 0, 0, N, N); g.globalCompositeOperation = 'source-over';
+    // also key out leftover navy sea pixels in the painting near the coast (where the painted coastline sits outside the game's sea tiles)
+    const near = new Uint8Array(W * D), q = []; for (let k = 0; k < W * D; k++) if (im.data[k * 4 + 3] === 0) { near[k] = 1; q.push(k); }
+    for (let r = 0; r < 8; r++) { const nq = []; for (const k of q) { const x = k % W, z = k / W | 0; for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const X = x + dx, Z = z + dz; if (X < 0 || Z < 0 || X >= W || Z >= D) continue; const j = Z * W + X; if (!near[j]) { near[j] = 1; nq.push(j); } } } q.length = 0; q.push(...nq); }
+    const id = g.getImageData(0, 0, N, N), d = id.data, sc = W / N; for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { if (!near[(y * sc | 0) * W + (x * sc | 0)]) continue; const o = (y * N + x) * 4; if (!d[o + 3]) continue; const R = d[o], G = d[o + 1], B = d[o + 2], blu = B - Math.max(R, G * 0.85); if (blu > 18 && R < 90) { const a = clamp((blu - 18) / 30, 0, 1); d[o + 3] = d[o + 3] * (1 - a); } }
+    g.putImageData(id, 0, 0); return (this._seaCut = c); }
   overview() { if (this.ov && !this.ovDirty) return this.ov; const c = this.ov || cv(W, D), g = c.getContext('2d'), img = g.createImageData(W, D), b = new Uint32Array(img.data.buffer);
     for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const k = z * W + x, t = this.tt[k], cr = this.cor[k] > 0.55; let col;
-      if (t === T.WATER) { const d = clamp((this.w.region[k] === RG.SEA ? 2.5 : 0) + (WATER - this.w.ground[k]) * 0.45, 0, 4); const q = WATERC[Math.round(d)]; col = rgb(q[0], q[1], q[2]); }
+      if (t === T.WATER && this.w.region[k] === RG.SEA) { b[k] = 0; continue; } if (t === T.WATER) { const d = clamp((this.w.region[k] === RG.SEA ? 2.5 : 0) + (WATER - this.w.ground[k]) * 0.45, 0, 4); const q = WATERC[Math.round(d)]; col = rgb(q[0], q[1], q[2]); }
       else if (t === T.BRICK || t === T.BRIDGE) col = PAL.brick[1]; else if (t === T.STONE) col = this.w.region[k] === RG.VOLCANO ? (this.w.lava && this.w.lava[k] ? shadeCol(H2('#ff5a00'), 0.95) : Math.hypot(x - this.w.volcano.x, z - this.w.volcano.z) < 10 ? shadeCol(H2('#ff6a1a'), 0.95) : shadeCol(H2('#2a2628'), 0.95)) : (this.w.snow && Math.hypot(x - this.w.snow.x, z - this.w.snow.z) < this.w.snow.R * 0.9) ? shadeCol(H2(hash(x, z, 32) < 0.5 ? '#e8eef2' : '#c8d0d8'), 0.95) : (x > W / 2 && this.w.region[k] === RG.HIGH) ? shadeCol(H2(hash(x, z, 33) < 0.33 ? '#c9b77a' : hash(x, z, 33) < 0.66 ? '#b8a06a' : '#a08a5a'), 0.95) : this.w.ground[k] > 32 ? shadeCol(H2('#e8eef2'), 0.95) : shadeCol(PAL.stone[1], 0.85 + Math.min(0.3, Math.max(0, (this.w.ground[k] - 16) * 0.02))); // v0.17: zoomed-out rock also shaded by height, not one flat grey; v0.18: snowy tops; v0.19: volcano; v0.21: lava flows read as orange channels on the zoomed-out map
       else if (this.w.region[k] === RG.MARSH) col = (() => { const h = hash(x, z, 35); return h < 0.2 ? rgb(42, 74, 58) : h < 0.35 ? rgb(106, 154, 58) : h < 0.5 ? rgb(58, 74, 42) : h < 0.65 ? rgb(74, 90, 58) : rgb(52, 66, 38); })(); // v0.21 reference 2: swamp is murky water / mud / green pools, not tan sand
       else if (t === T.SAND) col = PAL.sand[0]; else if (t === T.FARM) col = PAL.farm[1];
@@ -261,12 +276,17 @@ export class Renderer {
     const ox = Math.round(Wd / 2 - cam.tx * s), oy = Math.round(Hd / 2 - cam.tz * s);
     this.view = { ox, oy, s, dpr };
     const vx0 = (0 - ox) / s, vz0 = (0 - oy) / s, vx1 = (Wd - ox) / s, vz1 = (Hd - oy) / s;
-    ctx.imageSmoothingEnabled = false; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#145a80'; ctx.fillRect(0, 0, Wd, Hd);
+    ctx.imageSmoothingEnabled = false; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#1c6884'; ctx.fillRect(0, 0, Wd, Hd);
     ctx.setTransform(k, 0, 0, k, ox, oy);
     const ax0 = vx0 * P, az0 = vz0 * P, aw = (vx1 - vx0) * P, ah = (vz1 - vz0) * P;
     // animated water underlay
-    ctx.fillStyle = '#2a8fae'; ctx.fillRect(ax0, az0, aw, ah);
-    for (const [rp, sx, sy] of [[this.ripple, 3.5, 1.2], [this.ripple2, -2.4, 2.1]]) { const pat = ctx.createPattern(rp, 'repeat'); pat.setTransform(new DOMMatrix().translateSelf(Math.round(t * sx * 4) % 64, Math.round(Math.sin(t * 0.7) * 3 + t * sy) % 64)); ctx.fillStyle = pat; ctx.fillRect(ax0, az0, aw, ah); }
+    { const ws = 2.2 * clamp(9 / cam.scale, 1, 6); ctx.imageSmoothingEnabled = true; /* far zoom: waves keep their on-screen size so it reads like the close-up water */ // v0.13.10: textured base + two crossing soft wave layers + a slow shimmer, instead of flat colour and dashed ripples
+      for (const [rp, sx, sy, sc] of [[this.waterBase, 0.6, 0.3, ws * 3], [this.ripple, 2.6, 1.1, ws], [this.ripple2, -1.9, 1.7, ws * 0.8]]) { const pat = ctx.createPattern(rp, 'repeat'); pat.setTransform(new DOMMatrix().scaleSelf(sc, sc).translateSelf((t * sx * 4) % 256, (Math.sin(t * 0.4) * 3 + t * sy * 4) % 256)); ctx.fillStyle = pat; ctx.fillRect(ax0, az0, aw, ah); }
+      ctx.save(); ctx.globalAlpha = 0.35 + 0.15 * Math.sin(t * 0.9); const pat = ctx.createPattern(this.ripple, 'repeat'); pat.setTransform(new DOMMatrix().scaleSelf(ws * 1.7, ws * 1.7).rotateSelf(37).translateSelf((-t * 3) % 256, (t * 2) % 256)); ctx.fillStyle = pat; ctx.fillRect(ax0, az0, aw, ah); ctx.restore(); ctx.imageSmoothingEnabled = false; }
+    // v0.13.10: shallow turquoise shelf around the island, fading into deep water (far/mid zoom only)
+    if (cam.scale < 5.5) { if (!this.shelf) { const m = cv(W, D), mg = m.getContext('2d'), im = mg.createImageData(W, D); for (let k = 0; k < W * D; k++) { if (!(this.w.region[k] === RG.SEA && (this.w.water[k] || this.tt[k] === T.WATER))) { im.data[k * 4] = 70; im.data[k * 4 + 1] = 190; im.data[k * 4 + 2] = 190; im.data[k * 4 + 3] = 255; } } mg.putImageData(im, 0, 0);
+        let src = m; for (const n of [128, 48, 24]) { const c2 = cv(n, n), g2 = c2.getContext('2d'); g2.imageSmoothingEnabled = true; g2.drawImage(src, 0, 0, n, n); src = c2; } const out = cv(256, 256), og = out.getContext('2d'); og.imageSmoothingEnabled = true; og.drawImage(src, 0, 0, 256, 256); this.shelf = out; }
+      ctx.save(); ctx.globalAlpha = 0.75; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.shelf, 0, 0, 256, 256, 0, 0, W * P, D * P); ctx.restore(); ctx.imageSmoothingEnabled = false; }
     // ground
     const cx0 = clamp(Math.floor(vx0 / CH), 0, NC - 1), cx1 = clamp(Math.floor(vx1 / CH), 0, NC - 1), cz0 = clamp(Math.floor(vz0 / CH), 0, NC - 1), cz1 = clamp(Math.floor(vz1 / CH), 0, NC - 1);
     const far = cam.scale < 5.5, lowres = cam.scale < 3; let built = 0; // v0.13.4: the blocky 1-px-per-tile overview is now only the far (<3) base under the painting; 3-5.5 uses real chunks
@@ -274,12 +294,12 @@ export class Renderer {
       // v0.22: far zoom = Kyler's image, crossfading to game terrain as you zoom in. Scale <3: full image. Scale 3-5.5: blend image -> overview. Scale >=5.5: game chunks (close view, handled below). This is why far looks beautiful and close looks like the game, without a hard pop.
       const fullA = cam.scale < 3 ? 1 : cam.scale < 5.5 ? (5.5 - cam.scale) / 2.5 : 0;
       // v0.25 FIX: v0.24 upscaled the far image to 4608 but still cropped source rect 0,0,512,512 — so far view only ever showed the top-left 11% of the image (deep blue sea), stretched over the whole map. Now it draws the full natural size, with smoothing on for the downscale.
-      if (fullA > 0 && this.refFull && this.refFull.complete && this.refFull.naturalWidth) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.refFull, 0, 0, this.refFull.naturalWidth, this.refFull.naturalHeight, 0, 0, W * P, D * P); ctx.restore(); } }
+      if (fullA > 0 && this.refFull && this.refFull.complete && this.refFull.naturalWidth) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.seaCut(), 0, 0, this.seaCut().width, this.seaCut().height, 0, 0, W * P, D * P); ctx.restore(); } }
     else { const fullA = cam.scale < 5.5 ? (5.5 - cam.scale) / 2.5 : 0, pOK = this.refFull && this.refFull.complete && this.refFull.naturalWidth; let missing = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) if (!this.chunks.has(cx + ',' + cz)) missing = true;
-      if (missing) { if (pOK) { ctx.imageSmoothingEnabled = true; ctx.drawImage(this.refFull, 0, 0, this.refFull.naturalWidth, this.refFull.naturalHeight, 0, 0, W * P, D * P); ctx.imageSmoothingEnabled = false; } else ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P); }
+      if (missing) { if (pOK) { ctx.imageSmoothingEnabled = true; ctx.drawImage(this.seaCut(), 0, 0, this.seaCut().width, this.seaCut().height, 0, 0, W * P, D * P); ctx.imageSmoothingEnabled = false; } else ctx.drawImage(this.overview(), 0, 0, W, D, 0, 0, W * P, D * P); }
       ctx.imageSmoothingEnabled = k < 1; // v0.13.4: chunks shrunk below 1:1 are smoothed instead of nearest-neighbour stepping
       const budget = this.forceBuild ? 1e9 : 2; this.forceBuild = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) { const had = this.chunks.has(cx + ',' + cz), c = this.chunk(cx, cz, built < budget); if (c && !had) built++; if (c) ctx.drawImage(c, cx * CP, cz * CP); } ctx.imageSmoothingEnabled = false;
-      if (fullA > 0 && pOK) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.refFull, 0, 0, this.refFull.naturalWidth, this.refFull.naturalHeight, 0, 0, W * P, D * P); ctx.restore(); } }
+      if (fullA > 0 && pOK) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.seaCut(), 0, 0, this.seaCut().width, this.seaCut().height, 0, 0, W * P, D * P); ctx.restore(); } }
     // v0.24 landmarks: photo pictures far/mid only, fading out as you zoom in, so close zoom is clean tile ground, not a stretched photo. Full at scale <=5.5, fade 5.5-12, gone above 12.
     { const landA = cam.scale <= 5.5 ? 1 : cam.scale < 12 ? (12 - cam.scale) / 6.5 : 0;
       const refDraw = (im, cx, cz, wTiles) => { if (!im || !im.complete || !im.naturalWidth || landA <= 0) return; const wPx = wTiles * P, hPx = wPx * im.height / im.width; ctx.save(); ctx.globalAlpha = landA; ctx.imageSmoothingEnabled = false; ctx.drawImage(im, Math.round(cx * P - wPx / 2), Math.round(cz * P - hPx / 2), Math.round(wPx), Math.round(hPx)); ctx.restore(); };
