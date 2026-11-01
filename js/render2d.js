@@ -97,6 +97,10 @@ export class Renderer {
     else if (sb === B.GRASS) { t = T.GRASS; const rg = w.region[k]; gs = 0.3 + 0.8 * vnoise(x / 7, z / 7, 5) + (rg === RG.WOODS ? 0.3 : rg === RG.MEADOW ? 0.1 : 0); for (const tr of this.sim.tribes) { const d = Math.hypot(x - tr.cx, z - tr.cz); if (d < 4) gs -= (4 - d) * 0.25; } }
     /* v0.13.6: lawn is an organic noise-warped blob that fades into the haunted ground, not a hard rectangle */ const ex = (x + 0.5 - M.cx) / 24.5, ez = (z + 0.5 - M.cz - 1.5) / 23.5, /* v0.13.7b: lawn grown so the outer path still borders grass */ e = Math.hypot(ex, ez) + (vnoise(x / 4, z / 4, 71) - 0.5) * 0.45 + (vnoise(x / 1.7, z / 1.7, 72) - 0.5) * 0.12, lf = clamp((1.12 - e) / 0.22, 0, 1), inLawn = lf > 0.5; this.lawn[k] = lf; if (lf > 0.3 && t === T.GRASS) gs = Math.max(gs, 0.6 + 0.6 * lf); this.tt[k] = t; this.gs[k] = gs; const dm = Math.hypot(x - M.cx, z - M.cz); this.cor[k] = clamp((44 - dm) / 14 + (vnoise(x / 6, z / 6, 9) - 0.5) * 0.9, 0, 1) * (1 - lf) * (1 - lf);
   }
+  // v0.31b: landmark pictures fade out through a ragged noise edge, so their rectangle never shows as a straight line over the ground
+  softRef(im) { this._soft = this._soft || new Map(); let c = this._soft.get(im); if (c) return c; const w = im.naturalWidth, h = im.naturalHeight; c = cv(w, h); const g = c.getContext('2d'); g.drawImage(im, 0, 0); try { const id = g.getImageData(0, 0, w, h), d = id.data, m = Math.min(w, h) * 0.5;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const e = Math.min(x, y, w - 1 - x, h - 1 - y) / m + (vnoise(x / (w / 9), y / (h / 9), 111) - 0.5) * 0.5 + (vnoise(x / (w / 31), y / (h / 31), 112) - 0.5) * 0.16; const a = clamp((e - 0.12) / 0.4, 0, 1); d[(y * w + x) * 4 + 3] *= a; }
+      g.putImageData(id, 0, 0); } catch (e) {} this._soft.set(im, c); return c; }
   // v0.31 coast: smooth water field near the open sea, so the shoreline is a soft curve sampled per pixel, not a per-tile staircase
   makeShore() { const w = this.w, n = W * D, blur = (f, R) => { const t = new Float32Array(n), o = new Float32Array(n);
       for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { let s = 0; for (let d = -R; d <= R; d++) s += f[z * W + clamp(x + d, 0, W - 1)]; t[z * W + x] = s / (2 * R + 1); }
@@ -145,7 +149,7 @@ export class Renderer {
         const sf = bil(sv) + (n1 - 0.5) * 0.3;
         const cr = bil(q => cor[q]) + (n2 - 0.5) * 0.2 + (hr - 0.5) * 0.12, lw = bil(q => this.lawn[q]);
         if (sf > 0.5) { const row = gy >> 2, cell = hash((gx + (row & 1) * 3) >> 3, row, 6); const m = (gy & 3) === 0 || (((gx + (row & 1) * 3) & 7) === 0);
-          col = sf < 0.56 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; const hb = bil(q => w.ground[q]) + (vnoise(gx / 9, gy / 9, 60) - 0.5) * 1.6, snowy = hb > 32.5; if (sf >= 0.56 && !snowy && w.region[k] !== RG.VOLCANO) col = rockPix(gx, gy, h < 20 ? 1 : 0, true); /* v0.13.2: grey rock tinted toward the painted far map */ /* v0.13.1: natural stone on grey mountain rock only */ if (cr > 0.6 && hr < 0.3) col = PAL.cor[2];
+          col = sf < 0.56 && hr < 0.35 ? PAL.sline : m ? PAL.stone[3] : PAL.stone[cell < 0.3 ? 0 : cell > 0.8 ? 2 : 1]; if (!m && (gy & 3) === 1 && hr < 0.4) col = PAL.stone[2]; const hb = bil(q => w.ground[q]) + (vnoise(gx / 9, gy / 9, 60) - 0.5) * 1.6, snowy = hb > 32.5; if ((sf >= 0.56 || hr >= 0.35) && !snowy && w.region[k] !== RG.VOLCANO) col = rockPix(gx, gy, h < 20 ? 1 : 0, true); /* v0.13.2: grey rock tinted toward the painted far map */ /* v0.13.1: natural stone on grey mountain rock only */ if (cr > 0.6 && hr < 0.3) col = PAL.cor[2];
           // v0.17 rock relief: the stone branch used to return one flat grey pattern.
           // Now shade it by height and slope (peaks lighter, steep ground darker, east-facing
           // slope shaded), with dark crack speckle and light boulder highlights, so rocky
@@ -161,7 +165,7 @@ export class Renderer {
         const gf = shoreG ? 0.7 : bil(gv) + (n1 - 0.5) * 0.55 + (n2 - 0.5) * 0.07;
         const sand = shoreG ? 0 : bil(sav) + (n1 - 0.5) * 0.3;
         const MF = this.marshField(), mf = bil(q => MF[q]), toMarsh = mf > 0.02 && mf < 0.999 && mf + (vnoise(gx / 5, gy / 5, 44) - 0.5) * 0.9 + (vnoise(gx / 1.6, gy / 1.6, 45) - 0.5) * 0.35 > 0.5; // v0.13.12: grass and swamp mud blend through a ragged dithered band, never a clean shape edge
-        if (gf > 0.5 && !toMarsh) { const corr = cr > 0.5, wood = w.region[k] === RG.WOODS || w.region[k] === RG.JUNGLE, pl = corr ? PAL.cor : lw + (hr - 0.5) * 0.3 > 0.25 ? PAL.lawn : wood ? PAL.wood : PAL.grass;
+        if (gf > 0.5 && !toMarsh) { const corr = cr > 0.5, rgN = w.region[tget(Math.floor((gx + (vnoise(gx / 13, gy / 13, 101) - 0.5) * 56 + (hr - 0.5) * 10) / P), Math.floor((gy + (vnoise(gx / 13 + 40, gy / 13 + 17, 102) - 0.5) * 56 + (hash(gx, gy, 103) - 0.5) * 10) / P))], wood = rgN === RG.WOODS || rgN === RG.JUNGLE, /* v0.31b: palette picked from a noise-jittered neighbour so woods/jungle/meadow greens blend in a ragged dither, not per-tile blocks */ pl = corr ? PAL.cor : lw + (hr - 0.5) * 0.3 > 0.25 ? PAL.lawn : wood ? PAL.wood : PAL.grass;
           if (gf < 0.545 && !coastPx) col = corr ? PAL.cline : PAL.gline;
           else { const v = vnoise(gx / 10, gy / 10, 7) * 0.8 + vnoise(gx / 4, gy / 4, 8) * 0.2 + (hr - 0.5) * 0.06; col = pl[v < 0.3 ? 4 : v < 0.45 ? 0 : v < 0.66 ? 1 : v < 0.8 ? 2 : 3]; if (gf < 0.58 && !coastPx) col = pl[3]; }
         } else if (sand > 0.5) { const v = n2 + (hr - 0.5) * 0.3; col = PAL.sand[v < 0.3 ? 3 : v < 0.62 ? 0 : v < 0.85 ? 1 : 2]; if (((gy + (gx >> 3)) % 9 === 0) && hr < 0.6) col = PAL.sand[3]; }
@@ -172,7 +176,7 @@ export class Renderer {
         if (t !== T.WATER && t !== T.BRIDGE && t !== T.BRICK) { const pd = loopD(this.M, gx / P, gy / P) + (vnoise(gx / 5, gy / 5, 81) - 0.5) * 0.5; if (pd < LOOP.hw) { /* v0.13.7: crushed 1/4-down limestone, pale sand with grit speckle */ const gr = hash(gx, gy, 82), v = vnoise(gx / 3, gy / 3, 83); let L = gr < 0.07 ? [152, 128, 88] : gr > 0.95 ? [240, 226, 190] : v < 0.4 ? [214, 186, 132] : v < 0.75 ? [224, 198, 146] : [202, 174, 122]; if (pd > LOOP.hw - 0.22) { const r0 = col & 255, g0 = col >> 8 & 255, b0 = col >> 16 & 255, a = (LOOP.hw - pd) / 0.22; L = [r0 + (L[0] - r0) * a, g0 + (L[1] - g0) * a, b0 + (L[2] - b0) * a]; } col = rgb(L[0] | 0, L[1] | 0, L[2] | 0); } }
         // cliff faces where the ground steps down
         const drop = h - hS; if (drop >= 2 && t !== T.WATER && py >= P - Math.min(6, drop * 2)) { const cc = A.hex(py === P - Math.min(6, drop * 2) ? '#5a3a24' : (px + py) % 4 === 0 ? '#8a5a36' : '#a46e40'); col = rgb(cc[0], cc[1], cc[2]); }
-        else if (h > 18) { const f = 1 + Math.min(0.12, (h - 18) * 0.008); const r0 = col & 255, g0 = col >> 8 & 255, b0 = col >> 16 & 255; col = rgb(Math.min(255, r0 * f | 0), Math.min(255, g0 * f | 0), Math.min(255, b0 * f | 0)); }
+        else if (h > 17) { const hbl = bil(q => w.ground[q]) + (n1 - 0.5) * 1.2, f = 1 + clamp((hbl - 18) * 0.008, 0, 0.12); /* v0.31b: height brightening follows smooth interpolated height, not per-tile steps */ const r0 = col & 255, g0 = col >> 8 & 255, b0 = col >> 16 & 255; col = rgb(Math.min(255, r0 * f | 0), Math.min(255, g0 * f | 0), Math.min(255, b0 * f | 0)); }
         buf[o] = col;
       }
     }
@@ -343,7 +347,7 @@ export class Renderer {
       if (fullA > 0 && pOK) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.seaCut(), 0, 0, this.seaCut().width, this.seaCut().height, 0, 0, W * P, D * P); ctx.restore(); } }
     // v0.24 landmarks: photo pictures far/mid only, fading out as you zoom in, so close zoom is clean tile ground, not a stretched photo. Full at scale <=5.5, fade 5.5-12, gone above 12.
     { const landA = cam.scale <= 5.5 ? 1 : cam.scale < 12 ? (12 - cam.scale) / 6.5 : 0;
-      const refDraw = (im, cx, cz, wTiles) => { if (!im || !im.complete || !im.naturalWidth || landA <= 0) return; const wPx = wTiles * P, hPx = wPx * im.height / im.width; ctx.save(); ctx.globalAlpha = landA; ctx.imageSmoothingEnabled = false; ctx.drawImage(im, Math.round(cx * P - wPx / 2), Math.round(cz * P - hPx / 2), Math.round(wPx), Math.round(hPx)); ctx.restore(); };
+      const refDraw = (im, cx, cz, wTiles) => { if (!im || !im.complete || !im.naturalWidth || landA <= 0) return; const wPx = wTiles * P, hPx = wPx * im.height / im.width; ctx.save(); ctx.globalAlpha = landA; ctx.imageSmoothingEnabled = false; ctx.drawImage(this.softRef(im), Math.round(cx * P - wPx / 2), Math.round(cz * P - hPx / 2), Math.round(wPx), Math.round(hPx)); ctx.restore(); };
       if (w.volcano) refDraw(this.ref.volcano, w.volcano.x, w.volcano.z, w.volcano.R * 2);
       if (w.jungle) refDraw(this.ref.jungle, w.jungle.x, w.jungle.z, w.jungle.R * 2);
       if (w.snow) refDraw(this.ref.snow, w.snow.x, w.snow.z, w.snow.R * 2);
