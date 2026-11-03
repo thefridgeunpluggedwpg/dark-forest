@@ -1,5 +1,6 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+- **v0.13.19**: Splash screen now shows the BlackCard University crest bottom-left of the house, where it sits on the map.
 - **v0.13.18**: PixelFX effects up close: animated campfires at tribe camps, torches by village buildings, and white-blue lightning strikes in storms (MIT, credited below).
 - **v0.13.17**: Walk of shame is one penguin at a time — Tumnus makes an example of a single slacker, and nobody else is sent while one is still out. Cache dark-forest-v50.
 - **v0.13.16**: natural land borders: volcano, rock, jungle, meadow, woods and swamp edges are now ragged and blended (no straight diagonals or rectangles).
