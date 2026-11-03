@@ -6,6 +6,7 @@ import { W, D, WATER, CH, NC, B, RG, REGION_NAMES, LOOP } from './world.js';
 export const BAT_SPRITE = 'assets/bat-flap.png';
 import * as A from './art.js';
 import * as K from './kingsway.js';
+import { PFX } from './pixelfx-df.js'; // v0.32 test: PixelFX effects (MIT, patch-gg/pixelfx)
 const { P, cv, hash, vnoise } = A;
 const CP = CH * P; // chunk size in art px (512)
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -377,6 +378,7 @@ export class Renderer {
     ctx.fillStyle = 'rgba(20,30,10,0.28)';
     for (const o of list) { const sh = SH[o.t]; if (!sh || (o.t === 'vamp' && o.e.bat)) continue; ctx.fillStyle = (o.t === 'thr' || o.t === 'vamp' || o.t === 'peng' || o.t === 'tum') ? 'rgba(15,22,8,0.42)' : 'rgba(20,30,10,0.28)'; ctx.beginPath(); ctx.ellipse(o.x * P + sh[2], o.z * P + sh[3], sh[0], sh[1], 0, 0, 6.283); ctx.fill(); }
     // ---------- sprites ----------
+    const fxPost = [], fxClose = k >= 0.45; // v0.32: PixelFX flames are drawn after the light grade (self-lit), close zoom only
     const f3 = ((Math.floor(t * 8) % 3) + 3) % 3, lit = night > 0.45;
     const draw = (c, x, z, ax = 0.5, ay = 1, flip = false, alpha2 = 1) => { const X = Math.round(x * P - c.width * ax), Y = Math.round(z * P - c.height * ay); if (alpha2 !== 1) ctx.globalAlpha = alpha2; if (flip) { ctx.save(); ctx.translate(X + c.width, Y); ctx.scale(-1, 1); ctx.drawImage(c, 0, 0); ctx.restore(); } else ctx.drawImage(c, X, Y); if (alpha2 !== 1) ctx.globalAlpha = 1; };
     for (const o of list) {
@@ -392,10 +394,10 @@ export class Renderer {
         case 'rock': draw(this.S('rock' + o.v, () => A.rocks(o.v)), o.x, o.z); break;
         case 'grave': draw(this.S('grave' + o.v, () => A.gravestone(o.v)), o.x, o.z); break;
         case 'ruinwall': { const c = this.S('ruinw' + (o.v % 3), () => A.palisade('stone', o.v)); const hh = Math.round(c.height * (o.hh > 1 ? 0.85 : 0.5) - (o.v % 3) * 2); ctx.drawImage(c, 0, c.height - hh, c.width, hh, Math.round(o.x * P - c.width / 2), Math.round(o.z * P - hh), c.width, hh); if (o.v % 2) { ctx.fillStyle = '#4a7a3a'; ctx.fillRect(Math.round(o.x * P - 5), Math.round(o.z * P - hh + 2), 5, 3); } break; }
-        case 'torch': draw(this.S('torch' + f3, () => A.torch(f3)), o.x, o.z); lights.push([o.x, o.z - 0.9, 5.5, 'warm', 0.9]); glow.push([o.x, o.z - 1.1, 0.9, 'warm']); break;
+        case 'torch': if (PFX.on && fxClose) fxPost.push(['torch', o.x * P, o.z * P + 1, t + o.x * 0.37, 0.5]); else draw(this.S('torch' + f3, () => A.torch(f3)), o.x, o.z); lights.push([o.x, o.z - 0.9, 5.5, 'warm', 0.9]); glow.push([o.x, o.z - 1.1, 0.9, 'warm']); break;
         case 'chest': draw(this.S('chest', A.chest), o.x, o.z); break;
         case 'block': draw(this.S('blk' + o.b, () => A.construction(o.b)), o.x, o.z); break;
-        case 'fire': { draw(this.S('fire' + f3, () => A.campfire(f3)), o.x, o.z, 0.5, 0.85); lights.push([o.x, o.z - 0.3, 8 + Math.sin(t * 9) * 0.4, 'warm', 1]); glow.push([o.x, o.z - 0.4, 1.6, 'warm']); if (Math.random() < dt * 8) this.parts.push({ k: 'ember', x: o.x + (Math.random() - 0.5) * 0.5, z: o.z - 0.5, vx: (Math.random() - 0.5) * 0.3, vz: -0.8, life: 1.2 }); break; }
+        case 'fire': { if (PFX.on && fxClose) fxPost.push(['campfire', o.x * P, o.z * P - 2, t + o.x * 0.13, 0.6]); else draw(this.S('fire' + f3, () => A.campfire(f3)), o.x, o.z, 0.5, 0.85); lights.push([o.x, o.z - 0.3, 8 + Math.sin(t * 9) * 0.4, 'warm', 1]); glow.push([o.x, o.z - 0.4, 1.6, 'warm']); if (Math.random() < dt * 8) this.parts.push({ k: 'ember', x: o.x + (Math.random() - 0.5) * 0.5, z: o.z - 0.5, vx: (Math.random() - 0.5) * 0.3, vz: -0.8, life: 1.2 }); break; }
         case 'well': draw(this.S('well', A.well), o.x, o.z); break;
         case 'board': draw(this.S('board', A.board), o.x, o.z); break;
         case 'barrel': draw(this.S('barrel', A.barrel), o.x, o.z); break;
@@ -431,6 +433,14 @@ export class Renderer {
         case 'tum': this.drawTum(ctx, o, draw, t, night, sim); break;
       }
     }
+    // v0.32 PixelFX: eruption nights throw flame pillars out of the crater; storms put real bolts into the ground near the camera
+    const PILLARS_ON = false; // v0.13.18: volcano pillars looked laser-like with a round smoke blob — off until redone as ragged embers/smoke
+    if (PFX.on && fxClose) { const fq = this.fxQ || (this.fxQ = []), V = w.volcano;
+      if (PILLARS_ON && sim.volcanoErupt && inV(V.x, V.z, 30) && t > (this.fxNextP || 0)) { this.fxNextP = t + 1.2 + Math.random() * 2.2; const a = Math.random() * 6.283, r = Math.random() * 6; fq.push(['pillar', (V.x + Math.cos(a) * r) * P, (V.z + Math.sin(a) * r * 0.6) * P, t, 0.5 + Math.random() * 0.3]); }
+      if (this.fxStrike) { fq.push(['strike', this.fxStrike[0] * P, this.fxStrike[1] * P, t, 0.5]); this.fxStrike = null; }
+      for (let i = fq.length - 1; i >= 0; i--) { const q = fq[i]; fxPost.push([q[0], q[1], q[2], t - q[3], q[4], true, q]); }
+      for (const [x, z] of (sim.volcanoErupt && inV(V.x, V.z, 30)) ? [[V.x, V.z]] : []) lights.push([x, z, 14, 'warm', 1]); }
+    else if (this.fxQ) this.fxQ.length = 0;
     // ---------- particles (leaves, embers, fireflies, dust) ----------
     this.particles(ctx, dt, list, night, vx0, vz0, vx1, vz1, glow);
     // ---------- fog ----------
@@ -445,6 +455,9 @@ export class Renderer {
     ctx.setTransform(k, 0, 0, k, ox, oy); ctx.globalCompositeOperation = 'lighter'; ctx.imageSmoothingEnabled = true;
     for (const [x, z, r, c] of glow) { const a = c === 'red' ? 0.9 : 0.35 + night * 0.45; ctx.globalAlpha = a; const R = r * P; ctx.drawImage(this.glowC[c], x * P - R, z * P - R, R * 2, R * 2); }
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.imageSmoothingEnabled = false;
+    // v0.32 PixelFX: flames / pillars / bolts, after the grade so they glow at night; scale 1/2 keeps them sized to the 16px tiles
+    if (fxPost.length) { ctx.imageSmoothingEnabled = false; fxPost.sort((a, b) => a[2] - b[2]);
+      for (const [name, x, y, age, sc, once, q] of fxPost) { if (once) continue; const live = PFX.draw(ctx, name, x, y, age, sc); if (once && !live) { const fq = this.fxQ, j = fq.indexOf(q); if (j >= 0) fq.splice(j, 1); } } }
     // eyes on top of the grade
     for (const [X, Y, n] of this.hutTags) { const zz = Math.sin(t * 2 + X) * 1.5; ctx.font = 'bold 6px monospace'; ctx.textAlign = 'center'; ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(20,12,6,0.85)';
       const txt = 'zZ ' + n; ctx.strokeText(txt, X, Y + zz); ctx.fillStyle = '#fff2c0'; ctx.fillText(txt, X, Y + zz); }
@@ -470,9 +483,9 @@ export class Renderer {
         else if (wv.region[clamp(wz | 0, 0, D - 1) * W + clamp(wx | 0, 0, W - 1)] === RG.MARSH) { /* swamp: mist, not streaks — drawn below */ }
         else { ctx.strokeStyle = `rgba(190,210,240,${0.55 * I})`; ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(X - 5 * dpr, Y + 16 * dpr * spd); ctx.stroke(); } }
       for (let i = 0; i < 8 * I; i++) { const X = Math.random() * Wd, Y = Math.random() * Hd; ctx.fillStyle = 'rgba(200,220,255,.5)'; ctx.fillRect(X, Y, 3 * dpr, dpr); }
-      this.flashT = (this.flashT ?? 3) - dt; if (this.flashT < 0) { this.flash = 1; this.flashT = 3 + Math.random() * 6 / I; this.bolt = { x: Math.random() * Wd, seed: Math.random() * 1000 }; }
+      this.flashT = (this.flashT ?? 3) - dt; if (this.flashT < 0) { this.flash = 1; this.flashT = 3 + Math.random() * 6 / I; this.bolt = { x: Math.random() * Wd, seed: Math.random() * 1000 }; if (PFX.on && k >= 0.45) { this.fxStrike = [cam.tx + (Math.random() - 0.5) * Wd / s * 0.7, cam.tz + (Math.random() - 0.3) * Hd / s * 0.6]; this.bolt.world = true; } }
       if (this.flash > 0.02) { ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(170,190,255,${0.55 * this.flash * I})`; ctx.fillRect(0, 0, Wd, Hd); ctx.globalCompositeOperation = 'source-over';
-        if (this.flash > 0.6) { ctx.strokeStyle = '#eef4ff'; ctx.lineWidth = 2 * dpr; ctx.beginPath(); let X = this.bolt.x, Y = 0; ctx.moveTo(X, Y); for (let j = 1; j < 12; j++) { X += (hash(j, this.bolt.seed, 1) - 0.5) * 70 * dpr; Y += Hd / 22; ctx.lineTo(X, Y); } ctx.stroke(); }
+        if (this.flash > 0.6 && !this.bolt.world) { ctx.strokeStyle = '#eef4ff'; ctx.lineWidth = 2 * dpr; ctx.beginPath(); let X = this.bolt.x, Y = 0; ctx.moveTo(X, Y); for (let j = 1; j < 12; j++) { X += (hash(j, this.bolt.seed, 1) - 0.5) * 70 * dpr; Y += Hd / 22; ctx.lineTo(X, Y); } ctx.stroke(); }
         this.flash *= Math.pow(0.02, dt); if (this.flash < 0.5 && this.flash > 0.4 && Math.random() < 0.3) this.flash = 0.9; } }
     else this.flash = 0;
     // ---------- v0.19 ambient weather: volcano smoke always, snow over the peak always,
@@ -508,6 +521,9 @@ export class Renderer {
               const X = ox + wx * s, Y = oy + wz * s; if (X + r < -50 || X - r > Wd + 50 || Y + r < -50 || Y - r > Hd + 50) continue;
               ctx.globalAlpha = 0.3 * here * cA * (0.6 + 0.4 * h3); ctx.drawImage(sp, X - r, Y - r * 0.55, r * 2, r * 1.1); } }
           ctx.restore(); } } }
+    // v0.32 PixelFX one-shots (eruption pillars, lightning strikes) on top of storm grade and volcano smoke
+    if (fxPost.length) { ctx.setTransform(k, 0, 0, k, ox, oy); ctx.globalCompositeOperation = 'source-over'; ctx.imageSmoothingEnabled = false;
+      for (const [name, x, y, age, sc, once, q] of fxPost) { if (!once) continue; const live = PFX.draw(ctx, name, x, y, age, sc); if (!live) { const fq = this.fxQ, j = fq.indexOf(q); if (j >= 0) fq.splice(j, 1); } } }
     // ---------- overlay: selection, labels ----------
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     for (const e of sim.ents) if (e.held && e.alive && e.rx !== undefined) { // v0.12 grab highlight: ground shadow + pulsing glow ring

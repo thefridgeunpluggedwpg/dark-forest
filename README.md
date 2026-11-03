@@ -1,5 +1,6 @@
 # Dark Forest v0.2 — 2D top-down pixel-art sandbox
 
+- **v0.13.18**: PixelFX effects up close: animated campfires at tribe camps, torches by village buildings, and white-blue lightning strikes in storms (MIT, credited below).
 - **v0.13.17**: Walk of shame is one penguin at a time — Tumnus makes an example of a single slacker, and nobody else is sent while one is still out. Cache dark-forest-v50.
 - **v0.13.16**: natural land borders: volcano, rock, jungle, meadow, woods and swamp edges are now ragged and blended (no straight diagonals or rectangles).
 - **v0.13.15**: natural coastlines: no straight cut-off at the north edge, no stair-stepped shores; curving ragged coasts with beaches that vary in width and blend into grass and shallows.
@@ -270,3 +271,7 @@ At dusk (around 16:00 on the in-game clock), each tribe calls its people home. M
 - **Tumnus stays on the grounds.** The field inspection trips are gone. He parades the 83 Kingsway loop, pitches only to exiles/outcasts who wander onto the grounds (within 14 tiles), and inspects penguins remotely: after every 2 laps he checks one random penguin anywhere on the map and catches a slacker 60% of the time — so inspections are randomized and he doesn't catch them every time. Close-range snitching on the grounds is unchanged.
 - **Rubble trim.** The v0.12.1 rock pass marked tall columns as rubble but the collision still blocked any rubble stack over 3 — 48 tiles per seed-42 map. `fixRocks` now trims every rubble tile to a 3-step (invisible: one rock sprite per tile), trims ramp pairs as it marks them, and lets stair cuts go through solid rock (never trees/structures). The rubble flag and the collision finally agree.
 - Tests: headless Node sim smoke test (8 villages incl. 4 south, Tumnus within 14 tiles of the mansion over 5 days, node grab/carry/drop round-trip, no rubble tile over 3 high).
+
+## Credits
+
+- Campfire, torch and lightning-strike effects: [PixelFX](https://github.com/patch-gg/pixelfx) by Patch, MIT License (vendored in `js/vendor/pixelfx/`, see its LICENSE and NOTICE.md; parts adapted from Hugo Duprez's Sprite Fusion VFX, MIT).
