@@ -145,6 +145,10 @@ export const audio = {
     playFile('assets/sfx/impact-thud-65.mp3', () => {
       tone({ freq: 150, t, dur: 0.13, type: 'sine', gain: 0.22, dest: master, slide: 65 });
       tone({ freq: 392, t: t + 0.05, dur: 0.07, type: 'triangle', gain: 0.08, dest: master }); }); },
+  // v0.14 disaster cue: a low procedural rumble (warning) + the thunder recording on touchdown
+  rumble(warn) { if (!ensure()) return; if (ctx.state === 'suspended') return; const t = ctx.currentTime;
+    tone({ freq: 55, t, dur: 1.4, type: 'sawtooth', gain: 0.06, dest: master, slide: 38 }); tone({ freq: 41, t: t + 0.2, dur: 1.6, type: 'sine', gain: 0.12, dest: master, slide: 30 });
+    if (!warn) playFile('assets/sfx/ambience-thunder-04.mp3', () => {}); },
   place() { if (!ensure()) return; if (ctx.state === 'suspended') return; const t = ctx.currentTime;
     playFile('assets/sfx/feedback-confirm-57.mp3', () => {
       tone({ freq: 220, t, dur: 0.1, type: 'sine', gain: 0.12, dest: master, slide: 110 }); }); },

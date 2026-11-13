@@ -133,7 +133,7 @@ function resize() { const w = innerWidth, h = innerHeight; canvas.width = Math.r
 addEventListener('resize', resize); screen.orientation?.addEventListener?.('change', () => setTimeout(resize, 100));
 // ---------- world lifecycle ----------
 function reset(seed) {
-  world = new World(seed); sim = new Sim(world, seed); sim.onLog = addLogLine; $('#logList').innerHTML = ''; sim.logs.forEach(addLogLine);
+  world = new World(seed); sim = new Sim(world, seed); sim.onLog = addLogLine; sim.onEvent = showEvent; $('#logList').innerHTML = ''; sim.logs.forEach(addLogLine);
   { const ian = sim.thronglets()[0]; if (ian) ian.name = 'Ian'; } R.setWorld(world, sim); R.flush(1e9, true); selected = null; cam.follow = null; $('#insp').classList.add('hidden');
   const t0 = sim.tribes[0]; if (t0) { cam.tx = t0.cx; cam.tz = t0.cz; cam.dist = 34; }
   window.DF.world = world; window.DF.sim = sim;
@@ -141,6 +141,11 @@ function reset(seed) {
 function flushChunks() { R.flush(1e9, true); R.forceBuild = true; }
 let acc = 0, last = performance.now(), frames = 0, fpsT = last, fps = 0;
 const DT = 1000 / TPS;
+// ===== v0.14 event banner: volcano / storm warnings, evacuations, new settlements, repairs. Tap it to look. =====
+const BANNER = (() => { const b = document.createElement('div'); b.id = 'eventBanner'; b.className = 'hidden'; document.body.appendChild(b); let tm = 0, at = null;
+  b.addEventListener('pointerdown', ev => { ev.stopPropagation(); if (at) { cam.follow = null; cam.tx = at[0]; cam.tz = at[1]; if (cam.dist > 60) cam.dist = 60; } b.classList.add('hidden'); });
+  return { show(ev) { b.textContent = ev.text; b.dataset.kind = ev.kind; at = ev.x != null ? [ev.x, ev.z] : null; b.classList.remove('hidden'); b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); clearTimeout(tm); tm = setTimeout(() => b.classList.add('hidden'), /warn/.test(ev.kind) ? 9000 : 6000); } }; })();
+function showEvent(ev) { BANNER.show(ev); try { if (/warn|erupt$|tornado$|hurricane$/.test(ev.kind)) audio.rumble(/warn/.test(ev.kind)); else if (ev.kind === 'settle') audio.place(); else if (ev.kind === 'repaired') audio.pickup(); } catch (_) {} }
 // ===== v0.11 mini-map with village names =====
 const MM = (() => { const c = document.createElement('canvas'); c.id = 'minimap'; c.width = c.height = 512; document.body.appendChild(c); const g = c.getContext('2d');
   const base = document.createElement('canvas'); base.width = base.height = 256; const bg = base.getContext('2d'); let builtFor = null; const build = () => { builtFor = world; const id = bg.createImageData(256, 256), COL = ['#1d3f5e', '#c9b77a', '#5f8a3a', '#2f5a2a', '#4a5a3a', '#6d7058', '#24507a', '#6a6258', '#3a2f3e'];
@@ -153,13 +158,16 @@ const MM = (() => { const c = document.createElement('canvas'); c.id = 'minimap'
     for (const e of sim.ents) if (e.kind === 't' && e.alive && e.trade) { g.fillStyle = '#ffe070'; g.beginPath(); g.arc(e.x, e.z, 4, 0, 6.3); g.fill(); }
     // v0.11.1 labels: bigger font on a dark pill, nudged apart so they never overlap, kept inside the map
     const fs = Math.round(512 / c.getBoundingClientRect().width * 12.5) || 28; g.font = `bold ${fs}px "Pixelify Sans", monospace, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    const labs = sim.tribes.filter(tr => tr.alive && !tr.outcasts).map(tr => { const w = g.measureText(tr.name).width + fs * 0.7, h = fs * 1.3; return { tr, w, h, x: tr.cx, y: tr.cz - fs * 1.1, ax: tr.cx, ay: tr.cz }; });
+    const labs = sim.tribes.filter(tr => tr.alive && tr.members.size > 0) /* v0.14: every living village gets its name, new settlements and outcast camps included */.map(tr => { const w = g.measureText(tr.name).width + fs * 0.7, h = fs * 1.3; return { tr, w, h, x: tr.cx, y: tr.cz - fs * 1.1, ax: tr.cx, ay: tr.cz }; });
     const clampL = L => { L.x = Math.max(L.w / 2 + 3, Math.min(509 - L.w / 2, L.x)); L.y = Math.max(L.h / 2 + 3, Math.min(509 - L.h / 2, L.y)); };
     for (let it = 0; it < 60; it++) { let moved = false; for (const L of labs) clampL(L); for (let a = 0; a < labs.length; a++) for (let b = a + 1; b < labs.length; b++) { const A = labs[a], B = labs[b], ox = (A.w + B.w) / 2 + 4 - Math.abs(A.x - B.x), oy = (A.h + B.h) / 2 + 3 - Math.abs(A.y - B.y); if (ox > 0 && oy > 0) { moved = true; if (oy < ox) { const d = (A.y <= B.y ? -1 : 1) * oy / 2; A.y += d; B.y -= d; } else { const d = (A.x <= B.x ? -1 : 1) * ox / 2; A.x += d; B.x -= d; } } } if (!moved) break; }
-    for (const L of labs) { clampL(L); const { tr } = L; g.fillStyle = tr.color || '#e8c070'; g.beginPath(); g.arc(tr.cx, tr.cz, 8, 0, 6.3); g.fill(); g.lineWidth = 3; g.strokeStyle = '#1a1208'; g.stroke();
+    for (const L of labs) { clampL(L); const { tr } = L; g.fillStyle = typeof tr.color === 'number' ? '#' + tr.color.toString(16).padStart(6, '0') : (tr.color || '#e8c070'); g.beginPath(); g.arc(tr.cx, tr.cz, 8, 0, 6.3); g.fill(); g.lineWidth = 3; g.strokeStyle = '#1a1208'; g.stroke();
       if (Math.hypot(L.x - L.ax, L.y - L.ay) > fs * 1.6) { g.strokeStyle = 'rgba(255,240,200,0.7)'; g.lineWidth = 2; g.beginPath(); g.moveTo(L.ax, L.ay); g.lineTo(L.x, L.y + (L.y < L.ay ? L.h / 2 : -L.h / 2)); g.stroke(); }
-      const x0 = L.x - L.w / 2, y0 = L.y - L.h / 2, r = L.h / 2; g.fillStyle = 'rgba(18,12,6,0.82)'; g.beginPath(); g.moveTo(x0 + r, y0); g.arcTo(x0 + L.w, y0, x0 + L.w, y0 + L.h, r); g.arcTo(x0 + L.w, y0 + L.h, x0, y0 + L.h, r); g.arcTo(x0, y0 + L.h, x0, y0, r); g.arcTo(x0, y0, x0 + L.w, y0, r); g.closePath(); g.fill(); g.strokeStyle = 'rgba(232,192,112,0.75)'; g.lineWidth = 2; g.stroke();
+      const x0 = L.x - L.w / 2, y0 = L.y - L.h / 2, r = L.h / 2; g.fillStyle = 'rgba(18,12,6,0.82)'; g.beginPath(); g.moveTo(x0 + r, y0); g.arcTo(x0 + L.w, y0, x0 + L.w, y0 + L.h, r); g.arcTo(x0 + L.w, y0 + L.h, x0, y0 + L.h, r); g.arcTo(x0, y0 + L.h, x0, y0, r); g.arcTo(x0, y0, x0 + L.w, y0, r); g.closePath(); g.fill(); const fresh = tr.id >= 8 && sim.tick - (tr.bornAt || 0) < 1200; g.strokeStyle = fresh ? '#ffd27a' : 'rgba(232,192,112,0.75)'; g.lineWidth = fresh ? 4 : 2; g.stroke();
       g.fillStyle = '#fff4d0'; g.fillText(tr.name, L.x, L.y + 1); }
+    // v0.14 hazards: eruption danger zone and the storm's path
+    if (sim.erupt) { const E = sim.erupt; g.save(); g.setLineDash([16, 10]); g.lineWidth = 7; g.strokeStyle = E.phase === 'warn' && (now / 300 | 0) % 2 ? '#ffd040' : '#ff6a1a'; g.fillStyle = 'rgba(255,90,20,0.22)'; g.beginPath(); g.arc(E.x, E.z, E.R, 0, 6.3); g.fill(); g.stroke(); g.restore(); }
+    if (sim.wx) { const S = sim.wx, r = Math.max(10, S.R); g.save(); g.strokeStyle = S.kind === 'tornado' ? '#e8e0d0' : '#bfe3ff'; g.lineWidth = 4; g.beginPath(); for (let i = 0; i < 40; i++) { const a = i * 0.45 - now / 400, rr = r * i / 40; g.lineTo(S.x + Math.cos(a) * rr, S.z + Math.sin(a) * rr); } g.stroke(); g.restore(); }
     const hw = innerWidth / cam.scale / 2, hh = innerHeight / cam.scale / 2; g.strokeStyle = '#ffe9a8'; g.lineWidth = 3; g.strokeRect(cam.tx - hw, cam.tz - hh, hw * 2, hh * 2); } }; })();
 window.MM = MM;
 function loop(now) {

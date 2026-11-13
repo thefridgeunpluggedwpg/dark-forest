@@ -6,6 +6,7 @@ import { W, D, WATER, CH, NC, B, RG, REGION_NAMES, LOOP } from './world.js';
 export const BAT_SPRITE = 'assets/bat-flap.png';
 import * as A from './art.js';
 import * as K from './kingsway.js';
+import { DisasterFX } from './disasterfx.js'; // v0.14: eruption / storm / repair / settlement visuals (procedural)
 import { PFX } from './pixelfx-df.js'; // v0.32 test: PixelFX effects (MIT, patch-gg/pixelfx)
 const { P, cv, hash, vnoise } = A;
 const CP = CH * P; // chunk size in art px (512)
@@ -318,6 +319,7 @@ export class Renderer {
   // ------------------------------------------------------------------ frame
   render(cam, alpha, dt, sel, dpr) {
     const cvs = this.canvas, ctx = this.ctx, w = this.w, sim = this.sim; this.t += dt; const t = this.t;
+    { let na = 0; for (const tr of sim.tribes) if (tr.alive) na++; if (na !== this._nAlive) { this._nAlive = na; this.ovDirty = true; } } // v0.14: new settlements show on the island overview
     const Wd = cvs.width, Hd = cvs.height, s = cam.scale * dpr, k = s / P; // device px per art px
     const ox = Math.round(Wd / 2 - cam.tx * s), oy = Math.round(Hd / 2 - cam.tz * s);
     this.view = { ox, oy, s, dpr };
@@ -443,6 +445,8 @@ export class Renderer {
     else if (this.fxQ) this.fxQ.length = 0;
     // ---------- particles (leaves, embers, fireflies, dust) ----------
     this.particles(ctx, dt, list, night, vx0, vz0, vx1, vz1, glow);
+    // ---------- v0.14 disasters: eruption danger ring + lava bombs, tornado / hurricane, wall debris and repair dust ----------
+    this.disasterWorld(ctx, sim, { t, dt, k, inView: inV });
     // ---------- fog ----------
     const reg = w.region[clamp(cam.tz | 0, 0, D - 1) * W + clamp(cam.tx | 0, 0, W - 1)], mansD = Math.hypot(cam.tx - M.cx, cam.tz - M.cz);
     const fogA = clamp(0.05 + night * 0.22 + (sim.tod > 0.18 && sim.tod < 0.3 ? 0.25 : 0) + (reg === RG.MARSH ? 0.3 : 0) + (mansD < 50 ? 0.2 : 0), 0, 0.6);
@@ -463,7 +467,8 @@ export class Renderer {
       const txt = 'zZ ' + n; ctx.strokeText(txt, X, Y + zz); ctx.fillStyle = '#fff2c0'; ctx.fillText(txt, X, Y + zz); }
     for (const [X, Y, VW, fl] of this.eyes) { ctx.fillStyle = '#ff2a2a'; for (const ex of [0.455, 0.51]) ctx.fillRect(X + (ex - 0.5) * VW * fl - 0.5, Y - 0.3, 1, 0.7); }
     // v0.11: village names over each village when zoomed in; a small shield pip over guards
-    if (k > 1.2) { ctx.textAlign = 'center'; ctx.font = 'bold 9px "Pixelify Sans", monospace'; for (const tr of sim.tribes) { if (!tr.alive) continue; const X = tr.cx * P, Y = tr.cz * P - 30; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,12,6,0.85)'; ctx.strokeText(tr.name, X, Y); ctx.fillStyle = '#fff2c0'; ctx.fillText(tr.name, X, Y); } }
+    // v0.14: same font/style, plus a pop-in for new settlements and a status line (evacuated / sheltering / repairing walls)
+    if (k > 1.2) this.villageTags(ctx, sim);
     for (const e of sim.ents) if (e.kind === 't' && e.alive && e.guardOf != null && !e.inHut && !e.hidden) { const X = e.x * P, Y = e.z * P - 17; ctx.fillStyle = 'rgba(30,20,10,0.8)'; ctx.fillRect(X - 2.5, Y - 3, 5, 5); ctx.fillStyle = '#c9d4e0'; ctx.fillRect(X - 1.5, Y - 2, 3, 2.5); ctx.fillRect(X - 0.5, Y + 0.5, 1, 1); }
     // ---------- storm: clouds, rain, lightning (concentrated around 83 Kingsway) ----------
     if (sim.storm && night > 0.3) { const I = clamp(1.15 - mansD / 160, 0.35, 1) * Math.min(1, night * 1.5);
@@ -493,7 +498,7 @@ export class Renderer {
     { const wv = this.w, VX = ox + wv.volcano.x * s, VY = oy + wv.volcano.z * s, SX = ox + wv.snow.x * s, SY = oy + wv.snow.z * s;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       // volcano smoke plume, rising and drifting
-      for (let i = 0; i < (sim.volcanoErupt ? 14 : 6); i++) { const ph = (t * 0.25 + i / 6) % 1, Rr = (12 + i * 6 + ph * 40) * (s / 16) * dpr, a = sim.volcanoErupt ? 0.5 - ph * 0.3 : 0.3 - ph * 0.2; ctx.fillStyle = `rgba(60,55,60,${Math.max(0, a)})`; ctx.beginPath(); ctx.arc(VX + Math.sin(t + i) * 8 * dpr + ph * 20 * dpr, VY - ph * 60 * dpr, Math.max(2, Rr), 0, 6.283); ctx.fill(); }
+      for (let i = 0; i < (sim.volcanoErupt ? 14 : sim.volcanoWarn ? 11 : 6); i++) { const ph = (t * 0.25 + i / 6) % 1, Rr = (12 + i * 6 + ph * 40) * (s / 16) * dpr, a = sim.volcanoErupt ? 0.5 - ph * 0.3 : sim.volcanoWarn ? 0.45 - ph * 0.28 : 0.3 - ph * 0.2; ctx.fillStyle = sim.volcanoWarn ? `rgba(34,30,34,${Math.max(0, a)})` : `rgba(60,55,60,${Math.max(0, a)})`; /* v0.14: thick black smoke = the warning before an eruption */ ctx.beginPath(); ctx.arc(VX + Math.sin(t + i) * 8 * dpr + ph * 20 * dpr, VY - ph * 60 * dpr, Math.max(2, Rr), 0, 6.283); ctx.fill(); }
       if (sim.volcanoErupt) { ctx.fillStyle = 'rgba(255,110,20,0.5)'; ctx.beginPath(); ctx.arc(VX, VY, (10 + Math.sin(t * 6) * 3) * (s / 16) * dpr, 0, 6.283); ctx.fill(); for (let i = 0; i < 12; i++) { const a = hash(i, (t | 0) % 10, 5) * 6.283, dd = hash(i, 3, 6) * 30 * (s / 16) * dpr; ctx.fillStyle = 'rgba(255,150,40,0.9)'; ctx.fillRect(VX + Math.cos(a) * dd, VY + Math.sin(a) * dd, 2 * dpr, 2 * dpr); } }
       // snowflakes over the snowy peak, even when it is not storming
       if (SX > -100 && SX < Wd + 100 && SY > -100 && SY < Hd + 100) { ctx.fillStyle = 'rgba(255,255,255,0.85)'; for (let i = 0; i < 40; i++) { const fx = SX + ((hash(i, 11, 1) * 80 - 40 + t * 6 * (i % 3 - 1)) % 80) * (s / 16) * dpr, fy = SY + ((hash(i, 12, 1) * 80 - 40 + t * 10 * (0.5 + hash(i, 13, 1) * 0.5)) % 80) * (s / 16) * dpr; ctx.fillRect(fx, fy, 2 * dpr, 2 * dpr); } }
@@ -521,6 +526,7 @@ export class Renderer {
               const X = ox + wx * s, Y = oy + wz * s; if (X + r < -50 || X - r > Wd + 50 || Y + r < -50 || Y - r > Hd + 50) continue;
               ctx.globalAlpha = 0.3 * here * cA * (0.6 + 0.4 * h3); ctx.drawImage(sp, X - r, Y - r * 0.55, r * 2, r * 1.1); } }
           ctx.restore(); } } }
+    this.ashScreen(ctx, sim, cam, Wd, Hd, dpr, dt); // v0.14: ash fall + gloom inside the eruption zone
     // v0.32 PixelFX one-shots (eruption pillars, lightning strikes) on top of storm grade and volcano smoke
     if (fxPost.length) { ctx.setTransform(k, 0, 0, k, ox, oy); ctx.globalCompositeOperation = 'source-over'; ctx.imageSmoothingEnabled = false;
       for (const [name, x, y, age, sc, once, q] of fxPost) { if (!once) continue; const live = PFX.draw(ctx, name, x, y, age, sc); if (!live) { const fq = this.fxQ, j = fq.indexOf(q); if (j >= 0) fq.splice(j, 1); } } }
@@ -535,6 +541,7 @@ export class Renderer {
     if (sel && sel.alive !== undefined && sel.rx !== undefined) { const X = ox + sel.rx * s, Y = oy + (sel.rz + 0.42) * s; ctx.strokeStyle = '#ffe066'; ctx.lineWidth = Math.max(2, s / 12); ctx.setLineDash([s / 5, s / 7]); ctx.lineDashOffset = -t * 20; ctx.beginPath(); ctx.ellipse(X, Y, s * 0.55, s * 0.3, 0, 0, 6.283); ctx.stroke(); ctx.setLineDash([]);
       this.label(ctx, sel.name, X, Y - s * (sel.kind === 'v' ? 2.3 : 1.5), Math.max(11, Math.min(18, s / 3)) * dpr, '#ffe9a8'); }
     if (this.showLabels) this.regionLabels(ctx, ox, oy, s, dpr, cam);
+    if (k <= 1.2) { ctx.setTransform(1, 0, 0, 1, 0, 0); this.farNewLabels(ctx, sim, ox, oy, s, dpr); } // v0.14: new settlement names pop up at island view too
   }
   label(ctx, text, x, y, size, col) { ctx.font = `600 ${size}px "Pixelify Sans", monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = Math.max(3, size / 4); ctx.strokeStyle = '#1a100a'; ctx.strokeText(text, x, y); ctx.fillStyle = col; ctx.fillText(text, x, y); }
   zoneLabels() { const w = this.w, M = this.M, L = [];
@@ -636,6 +643,7 @@ export class Renderer {
     else { sy = 1 + 0.025 * Math.sin(t * 3 + e.id); if (e.state === 'social' || e.state === 'share') hop = Math.max(0, Math.sin(t * 7 + e.id)) * 0.8; }
     if (fear) { sy = 0.93; earA = 0.5; }
     const sx = 1 / Math.sqrt(sy), flip = dirIm ? 1 : (Math.sin(e.dir) < 0 ? -1 : 1);
+    if (e.pack && e.alive && !sleep) this.pack(ctx, x, y - hop, TW, TH, Math.cos(e.dir || 0) < 0 ? -1 : 1); // v0.14: evacuees carry a bundle on their back (drawn behind the body)
     ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y - hop);
     if (sleep) { ctx.translate(0, -2); ctx.rotate(-1.35); ctx.translate(TH * 0.42, 0); }
     ctx.scale(flip * sx, sy);
@@ -805,3 +813,4 @@ function flowerBed(v) { const c = cv(40, 16), g = c.getContext('2d'), Rr = (x, y
 function hedgeArt() { const c = cv(32, 14), g = c.getContext('2d'), Rr = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
   Rr(1, 3, 30, 10, '#24401e'); Rr(1, 3, 30, 3, '#3a5a2c'); for (let i = 0; i < 14; i++) Rr(1 + (hash(i, 1, 91) * 29 | 0), 3 + (hash(i, 2, 91) * 8 | 0), 2, 1, i % 2 ? '#4a6a36' : '#1c3218'); Rr(1, 12, 30, 1, '#1a2a16');
   return A.outline ? A.outline(c, '#101810') : c; }
+Object.assign(Renderer.prototype, DisasterFX);
