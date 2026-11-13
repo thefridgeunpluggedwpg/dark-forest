@@ -6,6 +6,7 @@ import { W, D, WATER, CH, NC, B, RG, REGION_NAMES, LOOP } from './world.js';
 export const BAT_SPRITE = 'assets/bat-flap.png';
 import * as A from './art.js';
 import * as K from './kingsway.js';
+import { LavaFX } from './lavafx.js'; // v0.14.1: living lava (procedural)
 import { DisasterFX } from './disasterfx.js'; // v0.14: eruption / storm / repair / settlement visuals (procedural)
 import { PFX } from './pixelfx-df.js'; // v0.32 test: PixelFX effects (MIT, patch-gg/pixelfx)
 const { P, cv, hash, vnoise } = A;
@@ -59,7 +60,7 @@ export class Renderer {
   makeFog() { const c = cv(96, 96), g = c.getContext('2d'), d = g.createImageData(96, 96); for (let y = 0; y < 96; y++) for (let x = 0; x < 96; x++) { const f = (a, b, s) => { let t = 0; for (const [fr, am] of [[a, 0.6], [b, 0.4]]) { const X = x / 96 * fr, Y = y / 96 * fr; t += am * tileN(X, Y, fr, s); } return t; }; const v = clamp((f(4, 8, 1) - 0.42) * 2.2, 0, 1); const i = (y * 96 + x) * 4; d.data[i] = d.data[i + 1] = d.data[i + 2] = 255; d.data[i + 3] = v * 255; } g.putImageData(d, 0, 0); return c; }
   // ------------------------------------------------------------------ world setup
   setWorld(world, sim) {
-    this.w = world; this.sim = sim; this._refSrc = null; this._seaCut = null; if (this.refFull && this.refFull.naturalWidth) this.makePaint(); this.chunks.clear(); this.objs.clear(); this.parts = []; this.ovDirty = true; // v0.21: zoomed-out overview must rebuild for a new world, or the old map lingers after a reset
+    this.w = world; this.sim = sim; (this.lavaFX || (this.lavaFX = new LavaFX())).setup(world); this._refSrc = null; this._seaCut = null; if (this.refFull && this.refFull.naturalWidth) this.makePaint(); this.chunks.clear(); this.objs.clear(); this.parts = []; this.ovDirty = true; // v0.21: zoomed-out overview must rebuild for a new world, or the old map lingers after a reset
     const m = world.mansion, mx = Math.floor(m.x), mz = Math.floor(m.z); this.M = { cx: mx, cz: mz, x0: mx - 8, x1: mx + 8, z0: mz - 6, z1: mz + 6 };
     const M = this.M; M.px0 = M.x0 - 2; M.px1 = M.x1 + 2; M.pz0 = M.z0 - 2; M.pz1 = M.z1 + 4;
     // per-tile classification
@@ -348,6 +349,8 @@ export class Renderer {
       ctx.imageSmoothingEnabled = k < 1; // v0.13.4: chunks shrunk below 1:1 are smoothed instead of nearest-neighbour stepping
       const budget = this.forceBuild ? 1e9 : 2; this.forceBuild = false; for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) { const had = this.chunks.has(cx + ',' + cz), c = this.chunk(cx, cz, built < budget); if (c && !had) built++; if (c) ctx.drawImage(c, cx * CP, cz * CP); } ctx.imageSmoothingEnabled = false;
       if (fullA > 0 && pOK) { ctx.save(); ctx.globalAlpha = fullA; ctx.imageSmoothingEnabled = true; ctx.drawImage(this.seaCut(), 0, 0, this.seaCut().width, this.seaCut().height, 0, 0, W * P, D * P); ctx.restore(); } }
+    // v0.14.1 living lava: animated molten texture + drifting crust over the baked lava tiles (close/mid zoom, fades out with the painted far map)
+    if (!lowres && this.lavaFX) { const fA = cam.scale < 5.5 ? (5.5 - cam.scale) / 2.5 : 0; try { this.lavaFX.draw(ctx, t, dt, P, vx0, vz0, vx1, vz1, 1 - fA, 1 - sim.dayAmt(), !!sim.volcanoErupt); } catch (err) { console.warn('lava', err); this.lavaFX.ok = false; } } else if (this.lavaFX) this.lavaFX.lights = [];
     // v0.24 landmarks: photo pictures far/mid only, fading out as you zoom in, so close zoom is clean tile ground, not a stretched photo. Full at scale <=5.5, fade 5.5-12, gone above 12.
     { const landA = cam.scale <= 5.5 ? 1 : cam.scale < 12 ? (12 - cam.scale) / 6.5 : 0;
       const refDraw = (im, cx, cz, wTiles) => { if (!im || !im.complete || !im.naturalWidth || landA <= 0) return; const wPx = wTiles * P, hPx = wPx * im.height / im.width; ctx.save(); ctx.globalAlpha = landA; ctx.imageSmoothingEnabled = false; ctx.drawImage(this.softRef(im), Math.round(cx * P - wPx / 2), Math.round(cz * P - hPx / 2), Math.round(wPx), Math.round(hPx)); ctx.restore(); };
@@ -357,7 +360,7 @@ export class Renderer {
       if (w.swamp) refDraw(this.ref.swamp, w.swamp.x, w.swamp.z, w.swamp.R * 2); }
     for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) { const kk = cx + ',' + cz; if (!this.objs.has(kk)) this.objs.set(kk, this.buildObjs(cx, cz)); }
     // ---------- gather drawables ----------
-    const night = 1 - sim.dayAmt(), lights = [], list = [], glow = []; this.eyes = []; this.hutTags = [];
+    const night = 1 - sim.dayAmt(), lights = [], list = [], glow = []; if (this.lavaFX && this.lavaFX.lights.length) lights.push(...this.lavaFX.lights); this.eyes = []; this.hutTags = [];
     const inV = (x, z, m = 3) => x > vx0 - m && x < vx1 + m && z > vz0 - m && z < vz1 + m + 4;
     for (let cz = Math.max(0, cz0 - 1); cz <= Math.min(NC - 1, cz1 + 1); cz++) for (let cx = Math.max(0, cx0 - 1); cx <= Math.min(NC - 1, cx1 + 1); cx++) { const L = this.objs.get(cx + ',' + cz); if (L) for (const o of L) if (inV(o.x, o.z)) list.push(o); }
     for (const d of this.decor) if (inV(d.x, d.z)) list.push(d);

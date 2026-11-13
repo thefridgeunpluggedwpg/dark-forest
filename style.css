@@ -74,3 +74,10 @@ html,body{overscroll-behavior:none;overflow:hidden;position:fixed;inset:0;-webki
 #eventBanner[data-kind="erupt"]{border-color:#ff4a10;background:rgba(40,10,4,.92)}
 #eventBanner.pop{animation:dfBannerPop .45s ease-out}
 @keyframes dfBannerPop{0%{transform:translateX(-50%) scale(.6);opacity:0}70%{transform:translateX(-50%) scale(1.06);opacity:1}100%{transform:translateX(-50%) scale(1)}}
+
+/* v0.14.1 God-menu disaster buttons */
+#tools .sub{font:600 13px 'Pixelify Sans',monospace;color:#ffd9a0;letter-spacing:.5px;margin:2px 2px 4px;text-transform:uppercase;opacity:.9}
+#godDis button.wide{grid-column:1/-1}
+#godDis button[data-dis="volcano"]{border-color:#8a2a10}#godDis button[data-dis="hurricane"]{border-color:#2a5a7a}#godDis button[data-dis="tornado"]{border-color:#5a5a50}
+#godDis button:disabled{opacity:.5;filter:grayscale(.55);cursor:not-allowed}
+#godDis button.fired{animation:dfFire .5s ease-out}@keyframes dfFire{0%{box-shadow:0 0 0 0 rgba(255,140,40,.9)}100%{box-shadow:0 0 0 10px rgba(255,140,40,0)}}

@@ -8,10 +8,13 @@
 //    Thronglets rush to repair the gaps so the walls are impenetrable again
 // Everything here is drawn procedurally by render2d.js (no new art files).
 import { W, D, B, RG } from './world.js';
+import { REPAIR_DUSK } from './sim.js';
 const DAYT = 1200, RING_R = 11;
 const dist = (a, b, c, d) => Math.hypot(a - c, b - d);
 export const MIN_VILLAGES = 8, MAX_VILLAGES = 14, EXTRA_CAP = 12; // extras bud off sporadically up to 12; outcast camps can push the total a little higher
 export const ERUPT = { WARN: 160, ERUPT: 720, CLEAR: 320 };
+export const GOD_COOL = 150; // v0.14.1 God-menu disaster buttons: ~15 s at 1x after a god-made disaster starts or ends before that button works again (no spamming)
+export const COAST_MAX = 60, INLAND_MIN = 80; // tiles from the sea: hurricanes only hit villages this close to the coast, tornadoes only ones this far inland
 export const STORM = { WARN: 120, tornado: 300, hurricane: 400 }; // short enough that the repair rush happens in daylight
 const NAME_A = ['Ash', 'Bramble', 'Cedar', 'Dew', 'Elm', 'Fox', 'Gorse', 'Heather', 'Ivy', 'Kestrel', 'Linden', 'Maple', 'Nettle', 'Otter', 'Pine', 'Quill', 'Reed', 'Sage', 'Thistle', 'Umber', 'Vale', 'Wren', 'Yarrow', 'Moss', 'Rowan', 'Hazel'];
 const NAME_B = ['brook', 'croft', 'dale', 'fold', 'gate', 'haven', 'hollow', 'hurst', 'lea', 'mere', 'moor', 'ridge', 'stead', 'thorpe', 'wick', 'wold', 'ford', 'glen', 'combe', 'den'];
@@ -80,6 +83,7 @@ export const DisasterMixin = {
     for (const e of this.ents) if (e.evac) { e.evac = null; e.pack = false; e.act = null; e.path = null; n++; }
     const names = []; for (const id of E.evac) { const tr = this.tribes[id]; if (!tr) continue; tr.evacuated = null; if (tr.alive && tr.members.size) { names.push(tr.name); if (tr.dmgCause) this.queueRepair(tr, tr.dmgCause); } }
     if (names.length || n) { this.log(`🏠 The ash has settled. ${names.length ? names.join(' and ') + ' head' + (names.length > 1 ? '' : 's') + ' home' : n + ' evacuees head home'} to rebuild.`, 'disaster'); this.emit('erupt-end', `🏠 The ash has settled — ${names.length ? names.join(', ') : 'evacuees'} going home`, E.x, E.z); }
+    if (E.god) (this.godCool || (this.godCool = {})).volcano = this.tick + GOD_COOL;
     this.erupt = null; this.volcanoErupt = false; this.volcanoWarn = false;
     this.nextEruption = this.dayTick(this.day + 6 + Math.floor(this.r() * 4), 0.3 + this.r() * 0.12); },
   updateEvac(e) { const H = this.tribes[e.evac.host]; if (!this.erupt || !H || !H.alive) { e.evac = null; e.pack = false; return false; }
@@ -127,6 +131,7 @@ export const DisasterMixin = {
     this.log(S.kind === 'tornado' ? `The tornado ropes out and vanishes${hit.length ? `, leaving holes in the walls of ${hit.map(t => t.name).join(' and ')}` : ''}.` : `The hurricane blows itself out at sea${hit.length ? `. ${hit.map(t => t.name).join(' and ')} ${hit.length > 1 ? 'count' : 'counts'} the damage` : ''}.`, 'disaster');
     for (const tr of hit) { if (S.rq && S.rq[tr.id]) continue; if (tr.evacuated != null) { tr.dmgCause = S.kind; continue; } this.queueRepair(tr, S.kind); }
     this.emit(S.kind + '-end', hit.length ? `🔨 ${hit.map(t => t.name).join(', ')} rushing to repair storm damage` : `The ${S.kind} has passed`, S.x, S.z);
+    if (S.god) (this.godCool || (this.godCool = {})).storm = this.tick + GOD_COOL;
     this.wx = null; this.nextStorm = this.dayTick(this.day + 3 + Math.floor(this.r() * 3), 0.24 + this.r() * 0.1);
     if (this.erupt) this.nextStorm += DAYT; },
   // knock up to n blocks off the top of a wall cell; the debris is salvaged into the village stock so the repair can start straight away
@@ -139,7 +144,29 @@ export const DisasterMixin = {
     if (!miss.length) return; miss.sort((a, b) => a.y - b.y);
     tr.jobs = tr.jobs.filter(j => j.type !== 'repair'); tr.jobs.unshift({ type: 'repair', blocks: miss, idx: 0, label: 'storm repair', urgent: true, cause, total: miss.length });
     tr.repairing = { since: this.tick, total: miss.length, cause }; this.stats.repairJobs = (this.stats.repairJobs || 0) + 1;
-    this.log(`🔨 ${tr.name} rushes to repair its walls after the ${cause} — ${miss.length} gap${miss.length > 1 ? 's' : ''} to fill${this.isNight() || this.tod > 0.66 ? ' at first light' : ' before dark'}.`, 'build'); },
+    this.log(`🔨 ${tr.name} rushes to repair its walls after the ${cause} — ${miss.length} gap${miss.length > 1 ? 's' : ''} to fill${this.isNight() || this.tod >= REPAIR_DUSK ? ' at first light' : ' before dusk'}.`, 'build'); },
+  // ---------- v0.14.1: God-menu triggers (volcano eruption, hurricane, tornado) ----------
+  // Guarded: one eruption and one storm at a time, plus a short cooldown after each start/end, so tapping repeatedly can't stack or break them.
+  godDisasterState(kind) { const gc = this.godCool || (this.godCool = {}), key = kind === 'volcano' ? 'volcano' : 'storm';
+    if (kind === 'volcano' && this.erupt) return { ready: false, why: `Mount Cinderwrath is already ${this.erupt.phase === 'warn' ? 'rumbling' : this.erupt.phase === 'erupt' ? 'erupting' : 'cooling'}` };
+    if (kind !== 'volcano' && this.wx) return { ready: false, why: `A ${this.wx.kind} is already raging` };
+    if (!this.villages().length) return { ready: false, why: 'No villages left to hit' };
+    const wait = (gc[key] || 0) - this.tick; if (wait > 0) return { ready: false, why: `Recharging (${Math.ceil(wait / 10)}s)`, wait };
+    return { ready: true }; },
+  godStormTarget(kind, prefId) { const vil = this.villages().filter(t => t.evacuated == null); for (const t of vil) if (t.coastD == null) t.coastD = this.coastDist(t.cx, t.cz);
+    const fits = t => kind === 'hurricane' ? t.coastD <= COAST_MAX : t.coastD >= INLAND_MIN;
+    const pref = prefId != null ? this.tribes[prefId] : null; if (pref && vil.includes(pref) && fits(pref)) return pref; // the village you have selected, if it suits this storm
+    const walled = vil.filter(t => t.wall && t.wall.done), pool0 = (walled.length ? walled : vil), pool = pool0.filter(fits).length ? pool0.filter(fits) : pool0;
+    const srt = pool.slice().sort(kind === 'hurricane' ? (a, b) => a.coastD - b.coastD : (a, b) => b.coastD - a.coastD);
+    return srt[(this.r() * Math.min(3, srt.length)) | 0] || null; },
+  godDisaster(kind, prefId) { const st = this.godDisasterState(kind); if (!st.ready) return { ok: false, why: st.why }; const gc = this.godCool;
+    if (kind === 'volcano') { this.startEruption(); gc.volcano = this.tick + GOD_COOL; this.erupt.god = true; this.stats.godDisasters = (this.stats.godDisasters || 0) + 1;
+      this.log(`🌋 A god's hand woke Mount Cinderwrath.`, 'god'); return { ok: true, x: this.erupt.x, z: this.erupt.z, R: this.erupt.R, evac: this.erupt.evac.length }; }
+    if (kind !== 'hurricane' && kind !== 'tornado') return { ok: false, why: 'Unknown disaster' };
+    const T = this.godStormTarget(kind, prefId); if (!T) return { ok: false, why: 'No village for the storm to hit' };
+    const S = this.startStorm(kind, T.id); if (!S) return { ok: false, why: 'The sky would not turn' }; S.god = true; gc.storm = this.tick + GOD_COOL; this.stats.godDisasters = (this.stats.godDisasters || 0) + 1;
+    this.log(kind === 'tornado' ? `🌪 A god's hand spun up a tornado over ${T.name}.` : `🌀 A god's hand stirred a hurricane off the coast near ${T.name}.`, 'god');
+    return { ok: true, target: T.name, id: T.id, x: T.cx, z: T.cz, coastD: T.coastD }; },
   // debug / test hooks (used by the headless tests and handy from the console)
   forceEruption() { if (this.erupt) return this.erupt; if (this.wx) this.wx = null; this.startEruption(); return this.erupt; },
   forceStorm(kind, targetId) { if (this.wx) return this.wx; this.startStorm(kind, targetId); return this.wx; },

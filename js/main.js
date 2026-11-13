@@ -83,6 +83,13 @@ let speed = 1; function setSpeed(s) { speed = s; document.querySelectorAll('[dat
 document.querySelectorAll('[data-speed]').forEach(b => b.onclick = () => setSpeed(+b.dataset.speed));
 const HINTS = { select: 'Tap a creature to follow it. Tap it again and drag to pick it up and move it, or press and hold any creature — or a berry bush, log pile or stone — to pick it up, then drag and let go to drop it. Tap a village to trade. Drag to pan; wheel or pinch to zoom; two fingers to pan.', spawn: 'Tap the ground to place a new Thronglet.', spawnP: 'Tap the ground to place a penguin (max 10 — one per mansion bedroom).', spawnV: 'Tap the ground to summon a vampire. It lives at 83 Kingsway (vampire rooms are separate from the 10 penguin bedrooms). By day it returns home.' };
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; document.querySelectorAll('[data-mode]').forEach(o => o.classList.toggle('on', o === b)); $('#modeHint').textContent = HINTS[mode] || `Tap the ground to drop ${mode.slice(5)}.`; });
+// v0.14.1: God-menu disaster buttons — trigger now, guarded + cooldown in sim.godDisaster(); storms hit the selected village if it suits (coast for hurricanes, inland for tornadoes)
+function godDisUI() { if (!sim) return; document.querySelectorAll('#godDis [data-dis]').forEach(b => { const st = sim.godDisasterState(b.dataset.dis); b.disabled = !st.ready; b.title = st.ready ? b.dataset.tip : st.why; }); }
+document.querySelectorAll('#godDis [data-dis]').forEach(b => { b.dataset.tip = b.title; b.onclick = () => { const kind = b.dataset.dis, pref = selected && selected.kind === 'hut' && selected.tr ? selected.tr.id : null;
+  const r = sim.godDisaster(kind, pref); if (!r.ok) { $('#modeHint').textContent = r.why + '.'; godDisUI(); return; }
+  b.classList.remove('fired'); void b.offsetWidth; b.classList.add('fired');
+  cam.follow = null; updateFollowUI(); cam.tx = r.x; cam.tz = r.z + (kind === 'volcano' ? 10 : 0); cam.dist = kind === 'volcano' ? Math.max(cam.dist, 110) : kind === 'hurricane' ? Math.max(cam.dist, 90) : Math.min(Math.max(cam.dist, 40), 60);
+  $('#modeHint').textContent = kind === 'volcano' ? `Mount Cinderwrath is waking — ${r.evac ? r.evac + ' village' + (r.evac > 1 ? 's' : '') + ' evacuating' : 'no villages in its shadow'}.` : kind === 'tornado' ? `Tornado forming over ${r.target}.` : `Hurricane heading for the coast near ${r.target}.`; godDisUI(); }; });
 $('#btnTumnus').onclick = () => { if (sim.tumnus && sim.tumnus.alive) select(sim.tumnus, true); };
 $('#btnSound').onclick = () => { audio.unlock(); const on = audio.toggle(); $('#btnSound').textContent = on ? '🔊' : '🔇'; $('#btnSound').classList.toggle('on', on); };
 if (audio.muted) $('#btnSound').textContent = '🔇'; else $('#btnSound').classList.add('on');
@@ -136,7 +143,7 @@ function reset(seed) {
   world = new World(seed); sim = new Sim(world, seed); sim.onLog = addLogLine; sim.onEvent = showEvent; $('#logList').innerHTML = ''; sim.logs.forEach(addLogLine);
   { const ian = sim.thronglets()[0]; if (ian) ian.name = 'Ian'; } R.setWorld(world, sim); R.flush(1e9, true); selected = null; cam.follow = null; $('#insp').classList.add('hidden');
   const t0 = sim.tribes[0]; if (t0) { cam.tx = t0.cx; cam.tz = t0.cz; cam.dist = 34; }
-  window.DF.world = world; window.DF.sim = sim;
+  window.DF.world = world; window.DF.sim = sim; godDisUI();
 }
 function flushChunks() { R.flush(1e9, true); R.forceBuild = true; }
 let acc = 0, last = performance.now(), frames = 0, fpsT = last, fps = 0;
@@ -176,7 +183,7 @@ function loop(now) {
   acc += dt * 1000 * speed; let n = 0; const maxT = 48; while (acc >= DT && n < maxT) { sim.step(); acc -= DT; n++; } if (n >= maxT) acc = 0;
   R.flush(); keyMove(dt); edgePan(dt); applyCam(dt);
   R.render(cam, Math.min(1, acc / DT), dt, selected, renderScale); drawHeldNode(); frames++; MM.draw(now);
-  if (now - fpsT > 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; $('#stFps').textContent = fps.toFixed(0) + ' fps'; updateTop(); renderInspector(); audio.setMood(sim.dayAmt(), !!sim.storm); window.DF.fps = fps; if (!window.DF.lockScale && fps < 32 && renderScale > 1) { renderScale = Math.max(1, renderScale - 0.25); resize(); } }
+  if (now - fpsT > 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; $('#stFps').textContent = fps.toFixed(0) + ' fps'; updateTop(); renderInspector(); godDisUI(); audio.setMood(sim.dayAmt(), !!sim.storm); window.DF.fps = fps; if (!window.DF.lockScale && fps < 32 && renderScale > 1) { renderScale = Math.max(1, renderScale - 0.25); resize(); } }
 }
 $('#btnLabels').onclick = () => { R.showLabels = !R.showLabels; $('#btnLabels').classList.toggle('on', R.showLabels); };
 window.__audio = audio; window.DF = { get held() { return held; }, cam, renderer: R, get speed() { return speed; }, setSpeed, select, flushChunks, setMode: m => document.querySelector(`[data-mode="${m}"]`)?.click(),

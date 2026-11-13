@@ -23,6 +23,7 @@ export const LOW_FLOOR = 5, GUARD_WIN = (globalThis.DF_GW || 0.42) /* v0.14: was
 export const SHADE_R = 12; // v0.9: the mansion's shadow — vampires are sun-immune within this radius of 83 Kingsway's centre
 const HUT_SLOTS = 8, RING_R = 11;
 const KB_MAX = globalThis.DF_KBMAX || 30, KB_DIV = globalThis.DF_KBDIV || 1.2, BITE = globalThis.DF_BITE || 56, VN0 = globalThis.DF_VN0 || 0.70, BC2 = globalThis.DF_BC2 || 90; // v0.14 kill-budget tuning (overridable for the balance harness)
+export const REPAIR_DAWN = 0.24, REPAIR_DUSK = 0.64; // v0.14.1: storm-repair window — repairers head inside before the vampires leave at dusk (VN0 0.70), and resume at first light
 const dist = (a, b, c, d) => Math.hypot(a - c, b - d);
 
 export class Sim {
@@ -179,6 +180,10 @@ export class Sim {
   inShade(x, z) { const m = this.w.mansion; return dist(x, z, m.x, m.z) < SHADE_R; }
   vampNight() { const t = this.tod; return t < 0.22 || t > VN0; } // vampires leave right at dusk (v0.14: a little earlier, 0.70 — was 0.72 — so they catch the last ones running home)
   isNight() { const t = this.tod; return t < 0.22 || t > 0.78; }
+  repairWindow() { const t = this.tod; return !this.isNight() && t >= REPAIR_DAWN && t < REPAIR_DUSK; } // v0.14.1: storm repairs only in safe daylight
+  repairPause(tr) { const key = this.day + (this.tod < 0.5 ? 0 : 0.5); if (tr.repairPausedAt === key) return; tr.repairPausedAt = key; const j = tr.jobs[0]; if (!j || !j.urgent || this.tod < 0.5 || !j.lastTick || this.tick - j.lastTick > 400) return; tr.repairPaused = true; // only announce it if they were actually out working this evening
+    this.log(`🌙 ${tr.name} stops its wall repairs as dusk falls and everyone heads inside — ${j.blocks.length - j.idx} gap${j.blocks.length - j.idx > 1 ? 's' : ''} left for first light.`, 'build'); this.emit('repair-pause', `🌙 ${tr.name} pauses repairs for the night`, tr.cx, tr.cz); }
+  repairResume(tr) { if (!tr.repairPaused) return; tr.repairPaused = false; this.log(`☀️ First light: ${tr.name} is back out patching its walls.`, 'build'); }
   dayAmt() { const t = this.tod, s = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); }; return s(0.18, 0.3, t) * (1 - s(0.7, 0.82, t)); }
   stamp() { return (this.isNight() ? 'Night ' : 'Day ') + this.day; }
   log(text, kind = 'info') { text = fixArticles(text); const L = { tick: this.tick, text: `${this.stamp()}: ${text}`, kind }; this.logs.push(L); if (this.logs.length > 400) this.logs.shift(); this.onLog && this.onLog(L); }
@@ -507,6 +512,7 @@ export class Sim {
     if (bl.gate) w.gates.set(bl.z * W + bl.x, { tribe: tr.id, open: 0, x: bl.x, z: bl.z });
     if (bl.farm) { const f = tr.farms.find(f => Math.abs(f.x - bl.x) <= 1 && Math.abs(f.z - bl.z) <= 1 && f.cells.length < 4); if (f) f.cells.push([bl.x, bl.z]); else tr.farms.push({ x: bl.x, z: bl.z, cells: [[bl.x, bl.z]], stage: -1, timer: 0 }); }
     if (job.type === 'wall' || job.type === 'repair' || job.type === 'fort') this.stats.wallBlocks++;
+    if (job.urgent) job.lastTick = this.tick;
     if (job.urgent) (this.fx || (this.fx = [])).push({ k: 'repair', x: bl.x + 0.5, z: bl.z + 0.5, tick: this.tick });
     job.idx++;
     if (job.idx >= job.blocks.length) this.finishJob(tr, job, e);
@@ -667,9 +673,11 @@ export class Sim {
       if (tr && e.hunger > 80 && e.traits.greed > 0.7 && e.traits.loyalty < 0.45) { const v = this.members(tr).find(o => o !== e && this.invFood(o) > 0 && dist(o.x, o.z, e.x, e.z) < 25); if (v) { e.act = { type: 'steal', o: v }; return; } }
     }
     if (!tr) return this.decideLoner(e);
-    { const urg = tr.jobs[0] && tr.jobs[0].urgent ? tr.jobs[0] : null; // v0.14: after a storm, everyone who can rushes to patch the walls (until nightfall)
-      if (urg && !night && e.hunger < 85 && urg.idx < urg.blocks.length) { const need = urg.blocks[urg.idx].cost; if (!need || tr.stock[need] >= 1) { e.act = { type: 'build', job: urg, rush: true }; return; } } }
-    if (night || t >= 0.655) {
+    const urg = tr.jobs[0] && tr.jobs[0].urgent ? tr.jobs[0] : null; // v0.14: after a storm, everyone who can rushes to patch the walls
+    // v0.14.1: ...but only in the safe daylight window — repairs pause before dusk (REPAIR_DUSK, well before the vampires leave at VN0) and resume at first light
+    if (urg && this.repairWindow() && e.hunger < 85 && urg.idx < urg.blocks.length) { const need = urg.blocks[urg.idx].cost; if (!need || tr.stock[need] >= 1) { this.repairResume(tr); e.act = { type: 'build', job: urg, rush: true }; return; } }
+    if (urg && !this.repairWindow()) this.repairPause(tr);
+    if (night || t >= 0.655 || (urg && t >= REPAIR_DUSK)) {
       if (e.hunger > 30 && tr.stock.food > 0 && !e.ateEve && dist(e.x, e.z, tr.cx, tr.cz) < 22) { e.ateEve = true; e.act = { type: 'eatStock' }; return; }
       if (e.home && !e.lockedOut) { e.act = { type: 'goHut', h: e.home }; return; }
       if (!this.safeAt(tr.cx, tr.cz) && night) { const sp = this.pickSpot(e, 30); if (sp) { e.act = { type: 'seekSpot', sp }; return; } }
@@ -758,6 +766,7 @@ export class Sim {
         break; }
       case 'build': {
         const job = a.job; if (!tr || !tr.jobs.includes(job) || job.idx >= job.blocks.length) { e.act = null; break; }
+        if (job.urgent && !this.repairWindow()) { this.repairPause(tr); e.act = null; break; } // v0.14.1: drop the trowel at dusk — decide() sends them indoors
         const bl = job.blocks[job.idx]; if (a.rush) e.state = 'repair';
         if (this.moveTo(e, bl.x + 0.5, bl.z + 0.5, sp * (a.rush ? 1.6 : 1), 2.2)) { if (e.cool > 0) break; e.cool = 2; const miss = this.placeJobBlock(tr, job, e); if (miss) e.act = null; }
         break; }
