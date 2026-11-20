@@ -1,11 +1,11 @@
-// Dark Forest v0.14 — Kyler's field notes (2026-11-12):
+// Dark Forest v0.14.2 — amplified storm/volcano wall damage + god-mode Wreck village (2026-11-20):
 //  * new settlements: when a village fills up, settlers found a new village somewhere random on the map; every new
 //    village gets a tribe name and the same label as the original 8 (minimap + close-up), with a pop-in when it appears
 //  * a minimum of 8 villages: if villages are lost, a big village sends settlers to refound one
 //  * Mount Cinderwrath erupts now and then (warning first, then the eruption): villages in its shadow pack up and
 //    evacuate to a safe village, then go home when the ash settles
-//  * storms: hurricanes along the coast, tornadoes inland. They tear blocks out of village walls; afterwards the
-//    Thronglets rush to repair the gaps so the walls are impenetrable again
+//  * storms: hurricanes along the coast, tornadoes inland, plus volcano lava bombs. They wreck village walls in range
+//    (most/all segments); the village stays exposed for a vulnerable window, then the Thronglets rush to repair
 // Everything here is drawn procedurally by render2d.js (no new art files).
 import { W, D, B, RG } from './world.js';
 import { REPAIR_DUSK } from './sim.js';
@@ -16,6 +16,16 @@ export const ERUPT = { WARN: 160, ERUPT: 720, CLEAR: 320 };
 export const GOD_COOL = 150; // v0.14.1 God-menu disaster buttons: ~15 s at 1x after a god-made disaster starts or ends before that button works again (no spamming)
 export const COAST_MAX = 60, INLAND_MIN = 80; // tiles from the sea: hurricanes only hit villages this close to the coast, tornadoes only ones this far inland
 export const STORM = { WARN: 120, tornado: 300, hurricane: 400 }; // short enough that the repair rush happens in daylight
+// v0.14.2 tunable damage: R = smash radius in tiles (village palisade is RING_R=11). pr = chance each in-range segment is hit.
+// nb = blocks knocked off a segment (walls are 2–3 high, so 3 flattens a cell). cap is a safety ceiling, not a target.
+// VULN.DELAY = ticks the village stays exposed after the first hit before the repair rush can start (360 ticks = 36s at 1x / 0.30 day).
+export const STORM_DMG = {
+  tornado:   { R: 22, pr: 1.00, nb: 3, cap: 999 },
+  hurricane: { R: 40, pr: 0.95, nb: 3, cap: 999 },
+  volcano:   { prNear: 1.00, prFar: 0.90, nbNear: 3, nbFar: 2, extraR: 8 },
+  wreck:     { R: 24, pr: 1.00, nb: 3, cap: 999 }, // god-mode Wreck village — guaranteed full-ring smash
+};
+export const VULN = { DELAY: 360 };
 const NAME_A = ['Ash', 'Bramble', 'Cedar', 'Dew', 'Elm', 'Fox', 'Gorse', 'Heather', 'Ivy', 'Kestrel', 'Linden', 'Maple', 'Nettle', 'Otter', 'Pine', 'Quill', 'Reed', 'Sage', 'Thistle', 'Umber', 'Vale', 'Wren', 'Yarrow', 'Moss', 'Rowan', 'Hazel'];
 const NAME_B = ['brook', 'croft', 'dale', 'fold', 'gate', 'haven', 'hollow', 'hurst', 'lea', 'mere', 'moor', 'ridge', 'stead', 'thorpe', 'wick', 'wold', 'ford', 'glen', 'combe', 'den'];
 
@@ -52,7 +62,8 @@ export const DisasterMixin = {
     if (!this.erupt && this.tick >= this.nextEruption) { if (this.wx || this.tod > 0.5) this.nextEruption = this.dayTick(this.day + 1, 0.3 + this.r() * 0.12); else this.startEruption(); } // daytime only, so the evacuation is readable
     if (!this.wx && this.tick >= this.nextStorm) { if (this.erupt || this.tod > 0.5) this.nextStorm = this.dayTick(this.day + 1, 0.24 + this.r() * 0.1); else this.startStorm(); }
     if (this.erupt) this.eruptTick();
-    if (this.wx) this.stormTick(); },
+    if (this.wx) this.stormTick();
+    this.repairDueTick(); },
   // ---------- volcano ----------
   hostFor(x, z, E, not) { const vs = this.villages().filter(t => t !== not && t.evacuated == null && dist(t.cx, t.cz, E.x, E.z) > E.R + 6);
     if (!vs.length) return null; return vs.sort((a, b) => (dist(a.cx, a.cz, x, z) - (a.wall && a.wall.done ? 45 : 0)) - (dist(b.cx, b.cz, x, z) - (b.wall && b.wall.done ? 45 : 0)))[0]; },
@@ -73,15 +84,19 @@ export const DisasterMixin = {
     if (E.phase === 'warn' && el >= ERUPT.WARN) { E.phase = 'erupt'; this.volcanoErupt = true; this.volcanoWarn = false;
       this.log(`🌋 Mount Cinderwrath ERUPTS! Lava bombs and ash rain down on everything in its shadow.`, 'disaster'); this.emit('erupt', '🌋 Mount Cinderwrath is erupting!', E.x, E.z);
       for (const id of E.evac) { const tr = this.tribes[id]; if (!tr || !tr.alive) continue; for (const f of tr.farms) if (f.stage >= 0) { f.stage = -1; f.timer = 0; this.setCrop(f); }
-        if (tr.wall && tr.wall.done) { const cells = tr.wall.cells.filter(c => !c.gate), hit = new Set(); for (let k = 0; k < 5 && cells.length; k++) { const c = cells[(this.r() * cells.length) | 0]; if (hit.has(c)) continue; hit.add(c); this.hitWall(tr, c, 2); }
-          if (hit.size) { tr.dmgCause = 'lava bombs'; this.log(`Lava bombs smashed ${hit.size} holes in the empty walls of ${tr.name} and buried its fields in ash.`, 'disaster'); } } } }
+        }
+      const Vcfg = STORM_DMG.volcano;
+      for (const tr of this.villages()) { const d = dist(tr.cx, tr.cz, E.x, E.z), R = E.R + Vcfg.extraR; if (!tr.wall || !tr.wall.done || d > R) continue;
+        const close = d <= E.R ? 1 - d / Math.max(1, E.R) : 0, pr = d <= E.R ? Vcfg.prNear : Vcfg.prFar * Math.max(0, 1 - (d - E.R) / Vcfg.extraR), nb = d <= E.R ? Vcfg.nbNear : Vcfg.nbFar;
+        const n = this.smashWalls(tr, 'lava bombs', tr.cx, tr.cz, RING_R + 4, pr, nb);
+        if (n) this.log(`Lava bombs smashed ${n} gap${n > 1 ? 's' : ''} in the walls of ${tr.name}${E.evac.includes(tr.id) ? ' and buried its fields in ash' : ''}.`, 'disaster'); } }
     if (E.phase === 'erupt') { this.volcanoErupt = true;
       if (this.tick % 5 === 0) for (const e of this.thronglets()) { if (e.evac || e.inHut || e.held || e.bcu) continue; if (dist(e.x, e.z, E.x, E.z) < E.R * 0.45) { e.fear = 100; e.hp -= 1.2; if (e.hp <= 0) this.die(e, `${e.name}${this.ofV(e)} was buried in ash on the slopes of Mount Cinderwrath.`); } }
       if (el >= ERUPT.WARN + ERUPT.ERUPT) { E.phase = 'clear'; this.volcanoErupt = false; this.log(`The eruption is dying down. Ash drifts over the ${E.evac.length ? 'empty villages' : 'slopes'} as the lava cools.`, 'disaster'); } }
     if (E.phase === 'clear' && el >= ERUPT.WARN + ERUPT.ERUPT + ERUPT.CLEAR) this.endEruption(); },
   endEruption() { const E = this.erupt; if (!E) return; let n = 0;
     for (const e of this.ents) if (e.evac) { e.evac = null; e.pack = false; e.act = null; e.path = null; n++; }
-    const names = []; for (const id of E.evac) { const tr = this.tribes[id]; if (!tr) continue; tr.evacuated = null; if (tr.alive && tr.members.size) { names.push(tr.name); if (tr.dmgCause) this.queueRepair(tr, tr.dmgCause); } }
+    const names = []; for (const id of E.evac) { const tr = this.tribes[id]; if (!tr) continue; tr.evacuated = null; if (tr.alive && tr.members.size) { names.push(tr.name); if (tr.dmgCause && (tr.vulnerableUntil || 0) <= this.tick) this.queueRepair(tr, tr.dmgCause); } }
     if (names.length || n) { this.log(`🏠 The ash has settled. ${names.length ? names.join(' and ') + ' head' + (names.length > 1 ? '' : 's') + ' home' : n + ' evacuees head home'} to rebuild.`, 'disaster'); this.emit('erupt-end', `🏠 The ash has settled — ${names.length ? names.join(', ') : 'evacuees'} going home`, E.x, E.z); }
     if (E.god) (this.godCool || (this.godCool = {})).volcano = this.tick + GOD_COOL;
     this.erupt = null; this.volcanoErupt = false; this.volcanoWarn = false;
@@ -102,9 +117,9 @@ export const DisasterMixin = {
     if (!T) { const srt = all.slice().sort(kind === 'hurricane' ? (a, b) => a.coastD - b.coastD : (a, b) => dist(a.cx, a.cz, 256, 256) - dist(b.cx, b.cz, 256, 256)); T = srt[(this.r() * Math.min(kind === 'hurricane' ? 2 : 3, srt.length)) | 0]; }
     let S;
     if (kind === 'tornado') { let sx = T.cx, sz = T.cz; for (let k = 0; k < 40; k++) { const a = this.r() * 6.283, x = T.cx + Math.cos(a) * 42, z = T.cz + Math.sin(a) * 42; if (x > 10 && z > 10 && x < W - 10 && z < D - 10 && !this.w.water[(z | 0) * W + (x | 0)] && this.w.region[(z | 0) * W + (x | 0)] !== RG.SEA) { sx = x; sz = z; break; } }
-      S = { kind, phase: 'warn', start: this.tick, R: 6.5, sx, sz, x: sx, z: sz, tx: T.cx, tz: T.cz, target: T.id, dur: STORM.tornado, hit: {}, seed: this.r() * 100 }; }
+      S = { kind, phase: 'warn', start: this.tick, R: STORM_DMG.tornado.R, sx, sz, x: sx, z: sz, tx: T.cx, tz: T.cz, target: T.id, dur: STORM.tornado, hit: {}, seed: this.r() * 100 }; }
     else { const a = Math.atan2(T.cz - 256, T.cx - 256), rad = dist(T.cx, T.cz, 256, 256) + 14, sg = this.r() < 0.5 ? 1 : -1;
-      S = { kind, phase: 'warn', start: this.tick, R: 30, rad, a0: a - 0.42 * sg, a1: a + 0.42 * sg, target: T.id, dur: STORM.hurricane, hit: {}, seed: this.r() * 100 }; S.x = 256 + Math.cos(S.a0) * (rad + 30); S.z = 256 + Math.sin(S.a0) * (rad + 30); }
+      S = { kind, phase: 'warn', start: this.tick, R: STORM_DMG.hurricane.R, rad, a0: a - 0.42 * sg, a1: a + 0.42 * sg, target: T.id, dur: STORM.hurricane, hit: {}, seed: this.r() * 100 }; S.x = 256 + Math.cos(S.a0) * (rad + 30); S.z = 256 + Math.sin(S.a0) * (rad + 30); }
     this.wx = S; this.lastStorm = kind; this.stats.bigStorms = (this.stats.bigStorms || 0) + 1;
     const where = kind === 'hurricane' ? `the coast near ${T.name}` : T.name;
     this.log(kind === 'tornado' ? `⚠ The sky over ${T.name} turns green-black and starts to spin. A tornado is forming!` : `⚠ Dark spiral clouds gather out at sea. A hurricane is heading for ${where}!`, 'disaster');
@@ -117,20 +132,26 @@ export const DisasterMixin = {
     if (S.kind === 'tornado') { const q = p * 2.5, dx = S.tx - S.sx, dz = S.tz - S.sz, L = Math.hypot(dx, dz) || 1, wob = Math.sin(p * 11 + S.seed) * 3.5; S.x = S.sx + dx * q - dz / L * wob; S.z = S.sz + dz * q + dx / L * wob; }
     else { const a = S.a0 + (S.a1 - S.a0) * p, rr = S.rad + 30 * Math.max(0, 1 - p * 3) + 4 * Math.sin(p * 7 + S.seed); S.x = 256 + Math.cos(a) * rr; S.z = 256 + Math.sin(a) * rr; }
     S.x = Math.max(4, Math.min(W - 4, S.x)); S.z = Math.max(4, Math.min(D - 4, S.z));
-    if (this.tick % 4 === 0) { const cap = S.kind === 'tornado' ? 18 : 12, pr = S.kind === 'tornado' ? 0.3 : 0.09, nb = S.kind === 'tornado' ? 2 : 1;
+    const cfg = STORM_DMG[S.wreck ? 'wreck' : S.kind] || STORM_DMG.tornado;
+    if (cfg.R && S.R !== cfg.R && S.wreck) S.R = cfg.R;
+    // v0.14.2: when the storm covers the target palisade, smash the whole ring from the village centre (god-mode and natural storms share this path)
+    const T = this.tribes[S.target];
+    if (S.phase === 'active' && !S.struck && T && T.wall && T.wall.done && dist(T.cx, T.cz, S.x, S.z) <= Math.max(3, S.R - RING_R + 1)) {
+      const n = this.smashWalls(T, S.kind, T.cx, T.cz, S.R, cfg.pr, cfg.nb);
+      if (n) { S.struck = true; S.hit[T.id] = (S.hit[T.id] || 0) + n; this.log(`${S.kind === 'tornado' ? 'The tornado' : 'Hurricane winds'} ${S.kind === 'tornado' ? 'rips through' : 'batter'} the walls of ${T.name}!`, 'disaster'); } }
+    if (this.tick % 4 === 0) { const cap = cfg.cap, pr = cfg.pr, nb = cfg.nb;
       for (const tr of this.tribes) { if (!tr.alive || !tr.wall || !tr.wall.done || dist(tr.cx, tr.cz, S.x, S.z) > S.R + RING_R + 1) continue; const h = S.hit[tr.id] || 0; if (h >= cap) continue; let n = h;
-        for (const c of tr.wall.cells) { if (n >= cap) break; const d = dist(c.x + 0.5, c.z + 0.5, S.x, S.z); if (d > S.R) continue; if (this.r() < pr * (1 - 0.5 * d / S.R) && this.hitWall(tr, c, nb)) n++; }
-        if (n > h) { if (!h) this.log(`${S.kind === 'tornado' ? 'The tornado' : 'Hurricane winds'} ${S.kind === 'tornado' ? 'rips through' : 'batter'} the walls of ${tr.name}!`, 'disaster'); S.hit[tr.id] = n; } }
-      // once the storm has moved off a village it hit, that village starts repairing straight away (no waiting for the storm to die out)
-      for (const id in S.hit) { const tr = this.tribes[+id]; if ((S.rq || (S.rq = {}))[id] || !tr || !tr.alive || tr.evacuated != null || dist(tr.cx, tr.cz, S.x, S.z) < S.R + RING_R + 4) continue; S.rq[id] = 1; this.queueRepair(tr, S.kind); this.emit('repair', `🔨 ${tr.name} rushes out to repair its walls`, tr.cx, tr.cz); }
+        for (const c of tr.wall.cells) { if (n >= cap) break; const d = dist(c.x + 0.5, c.z + 0.5, S.x, S.z); if (d > S.R) continue; if (this.r() < pr * (1 - 0.2 * d / S.R) && this.hitWall(tr, c, nb)) n++; }
+        if (n > h) { if (!h) this.log(`${S.kind === 'tornado' ? 'The tornado' : 'Hurricane winds'} ${S.kind === 'tornado' ? 'rips through' : 'batter'} the walls of ${tr.name}!`, 'disaster'); S.hit[tr.id] = n; if (n) this.markVulnerable(tr, S.kind); } }
+      // repairs wait for the vulnerable window (repairDueTick); don't start them the moment the storm drifts off
       for (const e of this.ents) { if (!e.alive || e.held || e.inHut || e.inMansion || e.hideout || e.kind === 'p' || e.kind === 'm') continue; const d = dist(e.x, e.z, S.x, S.z); if (d > S.R + 2) continue;
         if (e.kind === 't') { e.fear = 100; if (!e.evac && (!e.act || e.act.type !== 'flee')) { const a = Math.atan2(e.z - S.z, e.x - S.x); e.act = { type: 'flee', x: e.x + Math.cos(a) * 12, z: e.z + Math.sin(a) * 12, t: 30 }; }
           e.hp -= S.kind === 'tornado' ? 1.4 : 0.4; if (e.hp <= 0) this.die(e, `${e.name}${this.ofV(e)} was swept away by the ${S.kind}.`); } } }
     if (p >= 1) this.endStorm(); },
   endStorm() { const S = this.wx; if (!S) return; const hit = Object.keys(S.hit).map(id => this.tribes[+id]).filter(t => t && t.alive && t.members.size);
     this.log(S.kind === 'tornado' ? `The tornado ropes out and vanishes${hit.length ? `, leaving holes in the walls of ${hit.map(t => t.name).join(' and ')}` : ''}.` : `The hurricane blows itself out at sea${hit.length ? `. ${hit.map(t => t.name).join(' and ')} ${hit.length > 1 ? 'count' : 'counts'} the damage` : ''}.`, 'disaster');
-    for (const tr of hit) { if (S.rq && S.rq[tr.id]) continue; if (tr.evacuated != null) { tr.dmgCause = S.kind; continue; } this.queueRepair(tr, S.kind); }
-    this.emit(S.kind + '-end', hit.length ? `🔨 ${hit.map(t => t.name).join(', ')} rushing to repair storm damage` : `The ${S.kind} has passed`, S.x, S.z);
+    for (const tr of hit) { if (tr.evacuated != null) { tr.dmgCause = tr.dmgCause || S.kind; continue; } if (!tr.dmgCause) tr.dmgCause = S.kind; }
+    this.emit(S.kind + '-end', hit.length ? `⚠ ${hit.map(t => t.name).join(', ')} left with walls down after the ${S.kind}` : `The ${S.kind} has passed`, S.x, S.z);
     if (S.god) (this.godCool || (this.godCool = {})).storm = this.tick + GOD_COOL;
     this.wx = null; this.nextStorm = this.dayTick(this.day + 3 + Math.floor(this.r() * 3), 0.24 + this.r() * 0.1);
     if (this.erupt) this.nextStorm += DAYT; },
@@ -145,7 +166,26 @@ export const DisasterMixin = {
     tr.jobs = tr.jobs.filter(j => j.type !== 'repair'); tr.jobs.unshift({ type: 'repair', blocks: miss, idx: 0, label: 'storm repair', urgent: true, cause, total: miss.length });
     tr.repairing = { since: this.tick, total: miss.length, cause }; this.stats.repairJobs = (this.stats.repairJobs || 0) + 1;
     this.log(`🔨 ${tr.name} rushes to repair its walls after the ${cause} — ${miss.length} gap${miss.length > 1 ? 's' : ''} to fill${this.isNight() || this.tod >= REPAIR_DUSK ? ' at first light' : ' before dusk'}.`, 'build'); },
-  // ---------- v0.14.1: God-menu triggers (volcano eruption, hurricane, tornado) ----------
+  // v0.14.2: smash every in-range wall segment (scaled by pr/distance) and leave the village vulnerable until VULN.DELAY elapses
+  smashWalls(tr, cause, sx, sz, R, pr, nb) { if (!tr || !tr.wall || !tr.wall.done) return 0; let n = 0;
+    for (const c of tr.wall.cells) { const d = dist(c.x + 0.5, c.z + 0.5, sx, sz); if (R != null && d > R) continue; const fall = R ? (1 - 0.2 * d / R) : 1; if (this.r() < pr * fall && this.hitWall(tr, c, nb)) n++; }
+    if (n) this.markVulnerable(tr, cause); return n; },
+  markVulnerable(tr, cause) { if (tr.wall) tr.wall.breached = true; tr.dmgCause = cause; tr.vulnerableUntil = Math.max(tr.vulnerableUntil || 0, this.tick + VULN.DELAY); },
+  isVulnerable(tr) { return !!(tr.wall && tr.wall.breached && (tr.vulnerableUntil || 0) > this.tick); },
+  // test/debug: count missing wall blocks and flattened segments
+  wallHurt(tr) { if (!tr || !tr.wall) return { cells: 0, missing: 0, broken: 0, breached: false, vulnerable: false };
+    const w = this.w, want = tr.wall.level >= 2 ? 3 : 2; let missing = 0, broken = 0;
+    for (const c of tr.wall.cells) { const g = w.ground[c.z * W + c.x]; let miss = 0; for (let y = 0; y < want; y++) if (w.get(c.x, g + y, c.z) === 0) miss++; missing += miss; if (miss > 0) broken++; }
+    return { cells: tr.wall.cells.length, missing, broken, breached: !!tr.wall.breached, vulnerable: (tr.vulnerableUntil || 0) > this.tick, vulnerableUntil: tr.vulnerableUntil || 0, repairing: !!tr.repairing, want }; },
+  repairDueTick() { for (const tr of this.tribes) { if (!tr.alive || !tr.dmgCause || tr.repairing || tr.evacuated != null) continue; if ((tr.vulnerableUntil || 0) > this.tick) continue;
+      const S = this.wx; if (S && (S.hit[tr.id] || S.target === tr.id) && dist(tr.cx, tr.cz, S.x, S.z) < S.R + RING_R + 4) continue;
+      this.queueRepair(tr, tr.dmgCause); this.emit('repair', `🔨 ${tr.name} rushes out to repair its walls`, tr.cx, tr.cz); } },
+  godWreckTarget(prefId, ax, az) { const vil = this.villages().filter(t => t.evacuated == null); if (!vil.length) return null;
+    const pref = prefId != null ? this.tribes[prefId] : null; if (pref && vil.includes(pref)) return pref;
+    const walled = vil.filter(t => t.wall && t.wall.done), pool = walled.length ? walled : vil;
+    if (ax != null && az != null) return pool.slice().sort((a, b) => dist(a.cx, a.cz, ax, az) - dist(b.cx, b.cz, ax, az))[0];
+    return pool[0]; },
+  // ---------- v0.14.1 / v0.14.2: God-menu triggers (volcano, hurricane, tornado, Wreck village) ----------
   // Guarded: one eruption and one storm at a time, plus a short cooldown after each start/end, so tapping repeatedly can't stack or break them.
   godDisasterState(kind) { const gc = this.godCool || (this.godCool = {}), key = kind === 'volcano' ? 'volcano' : 'storm';
     if (kind === 'volcano' && this.erupt) return { ready: false, why: `Mount Cinderwrath is already ${this.erupt.phase === 'warn' ? 'rumbling' : this.erupt.phase === 'erupt' ? 'erupting' : 'cooling'}` };
@@ -159,9 +199,18 @@ export const DisasterMixin = {
     const walled = vil.filter(t => t.wall && t.wall.done), pool0 = (walled.length ? walled : vil), pool = pool0.filter(fits).length ? pool0.filter(fits) : pool0;
     const srt = pool.slice().sort(kind === 'hurricane' ? (a, b) => a.coastD - b.coastD : (a, b) => b.coastD - a.coastD);
     return srt[(this.r() * Math.min(3, srt.length)) | 0] || null; },
-  godDisaster(kind, prefId) { const st = this.godDisasterState(kind); if (!st.ready) return { ok: false, why: st.why }; const gc = this.godCool;
+  godDisaster(kind, prefId, aim) { const st = this.godDisasterState(kind); if (!st.ready) return { ok: false, why: st.why }; const gc = this.godCool;
     if (kind === 'volcano') { this.startEruption(); gc.volcano = this.tick + GOD_COOL; this.erupt.god = true; this.stats.godDisasters = (this.stats.godDisasters || 0) + 1;
       this.log(`🌋 A god's hand woke Mount Cinderwrath.`, 'god'); return { ok: true, x: this.erupt.x, z: this.erupt.z, R: this.erupt.R, evac: this.erupt.evac.length }; }
+    if (kind === 'wreck') { const T = this.godWreckTarget(prefId, aim && aim.x, aim && aim.z); if (!T) return { ok: false, why: 'No village to wreck' };
+      if (T.coastD == null) T.coastD = this.coastDist(T.cx, T.cz);
+      const sk = T.coastD <= COAST_MAX ? 'hurricane' : 'tornado'; const S = this.startStorm(sk, T.id); if (!S) return { ok: false, why: 'The sky would not turn' };
+      S.god = true; S.wreck = true; S.R = STORM_DMG.wreck.R;
+      if (S.kind === 'tornado') { S.sx = T.cx; S.sz = T.cz; S.x = T.cx; S.z = T.cz; S.tx = T.cx; S.tz = T.cz; }
+      else { const a = Math.atan2(T.cz - 256, T.cx - 256); S.rad = dist(T.cx, T.cz, 256, 256) || 1; S.a0 = a - 0.12; S.a1 = a + 0.12; S.x = T.cx; S.z = T.cz; }
+      gc.storm = this.tick + GOD_COOL; this.stats.godDisasters = (this.stats.godDisasters || 0) + 1;
+      this.log(`💥 A god's hand sent a ${S.kind} to wreck ${T.name}.`, 'god');
+      return { ok: true, target: T.name, id: T.id, x: T.cx, z: T.cz, kind: S.kind, wreck: true, coastD: T.coastD }; }
     if (kind !== 'hurricane' && kind !== 'tornado') return { ok: false, why: 'Unknown disaster' };
     const T = this.godStormTarget(kind, prefId); if (!T) return { ok: false, why: 'No village for the storm to hit' };
     const S = this.startStorm(kind, T.id); if (!S) return { ok: false, why: 'The sky would not turn' }; S.god = true; gc.storm = this.tick + GOD_COOL; this.stats.godDisasters = (this.stats.godDisasters || 0) + 1;

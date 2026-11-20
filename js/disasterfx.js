@@ -1,4 +1,4 @@
-// Dark Forest v0.14 — procedural visuals for js/disasters.js (no image files): eruption danger ring, lava bombs and ash,
+// Dark Forest v0.14.2 — procedural visuals for js/disasters.js (no image files): eruption danger ring, lava bombs and ash,
 // tornado funnel, hurricane spiral, wall debris / repair dust, evacuee packs, and village name tags (pop-in for new settlements).
 import { P, cv } from './art.js';
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -74,6 +74,7 @@ export const DisasterFX = {
       let sub = null, col = '#ffd27a'; const job = tr.jobs[0];
       if (tr.evacuated != null) { sub = 'evacuated — volcano'; col = '#ffb070'; }
       else if (job && job.urgent) { sub = `repairing walls ${job.idx}/${job.blocks.length}`; col = '#ffe08a'; }
+      else if (tr.wall && tr.wall.breached) { sub = (tr.vulnerableUntil || 0) > sim.tick ? 'walls down — exposed' : 'walls down'; col = '#ff8060'; }
       else if (hosting[tr.id]) { sub = `sheltering ${hosting[tr.id]} evacuees`; col = '#bfe3ff'; }
       else if (tr.id >= 8 && sim.tick - (tr.bornAt || 0) < 2400) { sub = tr.outcasts ? 'new outcast camp' : 'new settlement'; }
       if (sub) { ctx.font = 'bold 6px "Pixelify Sans", monospace'; ctx.lineWidth = 2.5; ctx.strokeText(sub, 0, 8); ctx.fillStyle = col; ctx.fillText(sub, 0, 8);
