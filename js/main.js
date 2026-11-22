@@ -58,7 +58,14 @@ canvas.addEventListener('wheel', e => { e.preventDefault(); zoomAt(Math.exp(e.de
 function zoomAt(f, sx, sy) { const before = toWorld(sx, sy); cam.dist = Math.max(cam.MIN, Math.min(cam.MAX, cam.dist * f)); const after = toWorld(sx, sy); if (!cam.follow) { cam.tx += before.x - after.x; cam.tz += before.z - after.z; } }
 function twoInfo() { const [a, b] = [...ptrs.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 }; }
 function pan(dx, dy) { if (cam.follow) { cam.follow = null; updateFollowUI(); } cam.tx -= dx / cam.scale; cam.tz -= dy / cam.scale; }
-const keys = new Set(); addEventListener('keydown', e => keys.add(e.key.toLowerCase())); addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+// v0.14.3: take keyboard focus (itch iframe), accept ArrowUp/"Up"/e.code, and preventDefault so arrows don't scroll the host page
+const keys = new Set();
+const keyOf = e => { const k = (e.key || '').toLowerCase(), c = (e.code || '').toLowerCase(); if (k === 'up' || k === 'arrowup' || c === 'arrowup') return 'arrowup'; if (k === 'down' || k === 'arrowdown' || c === 'arrowdown') return 'arrowdown'; if (k === 'left' || k === 'arrowleft' || c === 'arrowleft') return 'arrowleft'; if (k === 'right' || k === 'arrowright' || c === 'arrowright') return 'arrowright'; if (k && k !== 'unidentified') return k; return c.replace(/^key/, ''); };
+const typing = e => { const t = e.target; return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)); };
+const onKey = (e, down) => { if (typing(e)) return; const k = keyOf(e); if (!k) return; if (down) keys.add(k); else keys.delete(k); if (k.startsWith('arrow') || 'wasdqe-='.includes(k) || k === ' ') e.preventDefault(); };
+addEventListener('keydown', e => onKey(e, true)); addEventListener('keyup', e => onKey(e, false));
+canvas.tabIndex = 0; canvas.style.outline = 'none';
+const grabKeys = () => { try { window.focus(); canvas.focus({ preventScroll: true }); } catch (_) {} };
 function keyMove(dt) { const sp = cam.dist * 0.9 * dt; let fx = 0, fz = 0; if (keys.has('w') || keys.has('arrowup')) fz -= 1; if (keys.has('s') || keys.has('arrowdown')) fz += 1; if (keys.has('a') || keys.has('arrowleft')) fx -= 1; if (keys.has('d') || keys.has('arrowright')) fx += 1;
   if (fx || fz) { if (cam.follow) { cam.follow = null; updateFollowUI(); } cam.tx += fx * sp; cam.tz += fz * sp; } if (keys.has('q') || keys.has('-')) cam.dist *= 1 + dt; if (keys.has('e') || keys.has('=')) cam.dist /= 1 + dt; }
 function pickEntity(cx, cy) { let best = null, bd = 44; for (const e of sim.ents) { if (!e.alive || e.inHut) continue; const [sx, sy] = screenOf(e); const d = Math.hypot(sx - cx, sy - cy - (e.kind === 'v' ? -cam.scale * 0.6 : e.kind === 'p' ? -cam.scale * 0.4 : e.kind === 'm' ? -cam.scale * 0.6 : 0)); if (d < bd) { bd = d; best = e; } } return best; }
@@ -93,7 +100,7 @@ document.querySelectorAll('#godDis [data-dis]').forEach(b => { b.dataset.tip = b
 $('#btnTumnus').onclick = () => { if (sim.tumnus && sim.tumnus.alive) select(sim.tumnus, true); };
 $('#btnSound').onclick = () => { audio.unlock(); const on = audio.toggle(); $('#btnSound').textContent = on ? '🔊' : '🔇'; $('#btnSound').classList.toggle('on', on); };
 if (audio.muted) $('#btnSound').textContent = '🔇'; else $('#btnSound').classList.add('on');
-addEventListener('pointerdown', () => audio.unlock()); addEventListener('keydown', () => audio.unlock());
+addEventListener('pointerdown', e => { audio.unlock(); if (!typing(e)) grabKeys(); }); addEventListener('keydown', () => audio.unlock());
 $('#btnUnfollow').onclick = () => { cam.follow = null; updateFollowUI(); };
 $('#btnReset').onclick = () => reset(+$('#seed').value || 1);
 $('#btnFull').onclick = async () => { try { if (!document.fullscreenElement) { await (document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }) ?? document.documentElement.webkitRequestFullscreen?.()); try { await screen.orientation?.lock?.('landscape'); } catch (_) { } } else await document.exitFullscreen(); } catch (_) { } };
@@ -190,4 +197,4 @@ window.__audio = audio; window.DF = { get held() { return held; }, cam, renderer
   selectedName: () => selected && selected.name, screenOf, fast(n) { for (let i = 0; i < n; i++) sim.step(); }, setScale(s) { renderScale = s; window.DF.lockScale = true; resize(); }, reset };
 reset(42); resize(); if (innerHeight < 500) { $('#tools').classList.add('collapsed'); $('#log').classList.add('collapsed'); }
 document.fonts?.load?.('16px "Pixelify Sans"'); document.fonts?.load?.('20px "Jacquard 12"');
-$('#loading').classList.add('splash'); setTimeout(() => $('#loading').classList.add('gone'), 1400); setTimeout(() => $('#loading').remove(), 2600); requestAnimationFrame(loop); window.DF.ready = true;
+$('#loading').classList.add('splash'); setTimeout(() => $('#loading').classList.add('gone'), 1400); setTimeout(() => $('#loading').remove(), 2600); requestAnimationFrame(loop); window.DF.ready = true; grabKeys();
