@@ -1,5 +1,5 @@
-// v0.14.2 headless check: god-mode hurricane, tornado, volcano and Wreck village
-// smash wall segments, set the vulnerable state, then repairs restore the ring.
+// v0.14.4 headless check: god-mode hurricane, tornado, volcano and Wreck village
+// smash wall segments AND huts, set the vulnerable state, then repairs restore the ring.
 import { World, B, W } from '../js/world.js';
 import { Sim, DAY } from '../js/sim.js';
 import { STORM, STORM_DMG, VULN, ERUPT, GOD_COOL } from '../js/disasters.js';
@@ -48,7 +48,7 @@ function clearCool(s) {
   s.nextStorm = s.tick + 1e7; s.nextEruption = s.tick + 1e7;
 }
 
-console.log('Dark Forest v0.14.2 storm-damage test (seed 42)');
+console.log('Dark Forest v0.14.4 storm-damage test (seed 42)');
 const s = new Sim(new World(42), 42);
 s.nextEruption = 1e9; s.nextStorm = 1e9;
 // step far enough that tribes exist and huts are placed
@@ -66,6 +66,7 @@ const results = {};
 for (const kind of ['tornado', 'hurricane']) {
   clearCool(s); finishWalls(s); morning(s);
   const beforeAll = Object.fromEntries(walled.map(t => [t.id, s.wallHurt(t)]));
+  const hutsBeforeAll = Object.fromEntries(walled.map(t => [t.id, t.huts.length]));
   const r = s.godDisaster(kind);
   console.log(`\n== god ${kind} ==`, r.ok ? `${r.target} coastD=${r.coastD}` : r.why);
   if (!r.ok) { fail(`${kind} godDisaster failed: ${r.why}`); continue; }
@@ -78,6 +79,11 @@ for (const kind of ['tornado', 'hurricane']) {
   else ok(`${kind} broke ${hurt.broken}/${hurt.cells} segments, missing ${hurt.missing} blocks`);
   if (!hurt.breached) fail(`${kind}: wall.breached not set`); else ok(`${kind} breached`);
   if (!hurt.vulnerable) fail(`${kind}: vulnerable window not set`); else ok(`${kind} vulnerableUntil=${hurt.vulnerableUntil} (delay ${hurt.vulnerableUntil - s.tick} ticks, expect ~${VULN.DELAY})`);
+  const hb = hutsBeforeAll[T.id] || 0, ha = T.huts.length, smashed = hb - ha;
+  console.log('  huts', hb, '->', ha, 'smashed', smashed);
+  if (hb < 1) fail(`${kind}: target had no huts to smash (need buildings in the test village)`);
+  else if (smashed < 1) fail(`${kind}: smashed no huts (${ha}/${hb} still standing)`);
+  else ok(`${kind} smashed ${smashed}/${hb} huts`);
   if (T.repairing) fail(`${kind}: repairs started during the vulnerable window`); else ok(`${kind} repairs held during vulnerable window`);
   // finish the storm, expire vuln, then let them repair
   while (s.wx) s.step();
@@ -98,6 +104,7 @@ for (const kind of ['tornado', 'hurricane']) {
 clearCool(s); finishWalls(s); morning(s);
 {
   const T = s.villages().filter(t => t.wall && t.wall.done)[0];
+  const wreckHutsBefore = T.huts.length;
   const r = s.godDisaster('wreck', T.id, { x: T.cx, z: T.cz });
   console.log(`\n== god wreck ==`, r.ok ? `${r.target} via ${r.kind}` : r.why);
   if (!r.ok) fail('wreck failed: ' + r.why);
@@ -110,20 +117,26 @@ clearCool(s); finishWalls(s); morning(s);
     else ok(`wreck broke ${hurt.broken}/${hurt.cells} segments`);
     if (!hurt.breached || !hurt.vulnerable) fail('wreck did not leave the village vulnerable');
     else ok('wreck left village breached and vulnerable');
-    results.wreck = { target: r.target, kind: r.kind, broken: hurt.broken, cells: hurt.cells, missing: hurt.missing };
+    const wreckSmashed = wreckHutsBefore - s.tribes[r.id].huts.length;
+    console.log('  huts', wreckHutsBefore, '->', s.tribes[r.id].huts.length, 'smashed', wreckSmashed);
+    if (wreckHutsBefore < 1) fail('wreck: target had no huts');
+    else if (wreckSmashed < 1) fail(`wreck: smashed no huts (${s.tribes[r.id].huts.length}/${wreckHutsBefore} still standing)`);
+    else ok(`wreck smashed ${wreckSmashed}/${wreckHutsBefore} huts`);
+    results.wreck = { target: r.target, kind: r.kind, broken: hurt.broken, cells: hurt.cells, missing: hurt.missing, hutsBefore: wreckHutsBefore, hutsSmashed: wreckSmashed };
   }
 }
 
 // --- volcano ---
 clearCool(s); finishWalls(s); morning(s);
 {
+  const hutsBeforeVolc = Object.fromEntries(s.villages().map(t => [t.id, t.huts.length]));
   const r = s.godDisaster('volcano');
   console.log(`\n== god volcano ==`, r.ok ? `R=${r.R} evac=${r.evac}` : r.why);
   if (!r.ok) fail('volcano failed: ' + r.why);
   else {
     // skip the warn phase
     let n = 0; while (s.erupt && s.erupt.phase === 'warn' && n < ERUPT.WARN + 20) { s.step(); n++; }
-    const hits = s.villages().map(t => ({ name: t.name, d: Math.hypot(t.cx - r.x, t.cz - r.z), ...s.wallHurt(t) })).filter(h => h.broken > 0 || h.breached);
+    const hits = s.villages().map(t => ({ name: t.name, id: t.id, d: Math.hypot(t.cx - r.x, t.cz - r.z), huts: t.huts.length, hutsBefore: hutsBeforeVolc[t.id] || 0, ...s.wallHurt(t) })).filter(h => h.broken > 0 || h.breached || h.hutsBefore > h.huts);
     hits.sort((a, b) => a.d - b.d);
     console.log('  damaged villages', hits.map(h => `${h.name} d=${h.d.toFixed(0)} broken=${h.broken}/${h.cells} miss=${h.missing} vuln=${h.vulnerable}`).join(' | ') || '(none)');
     if (!hits.length) fail('volcano smashed no walls');
@@ -134,7 +147,11 @@ clearCool(s); finishWalls(s); morning(s);
       if (!near.breached || !near.vulnerable) fail('volcano did not set vulnerable/breached');
       else ok('volcano left at least the nearest village vulnerable');
     }
-    results.volcano = { evac: r.evac, R: r.R, hits: hits.map(h => ({ name: h.name, d: +h.d.toFixed(1), broken: h.broken, cells: h.cells })) };
+    const hutHits = s.villages().map(t => ({ name: t.name, before: hutsBeforeVolc[t.id] || 0, after: t.huts.length, smashed: (hutsBeforeVolc[t.id] || 0) - t.huts.length })).filter(h => h.smashed > 0);
+    console.log('  huts smashed', hutHits.map(h => `${h.name} ${h.before}->${h.after}`).join(' | ') || '(none)');
+    if (!hutHits.length) fail('volcano smashed no huts');
+    else ok(`volcano smashed huts in ${hutHits.length} village(s)`);
+    results.volcano = { evac: r.evac, R: r.R, hits: hits.map(h => ({ name: h.name, d: +h.d.toFixed(1), broken: h.broken, cells: h.cells })), hutHits };
   }
 }
 

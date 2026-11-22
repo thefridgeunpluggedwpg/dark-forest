@@ -4,8 +4,8 @@
 //  * a minimum of 8 villages: if villages are lost, a big village sends settlers to refound one
 //  * Mount Cinderwrath erupts now and then (warning first, then the eruption): villages in its shadow pack up and
 //    evacuate to a safe village, then go home when the ash settles
-//  * storms: hurricanes along the coast, tornadoes inland, plus volcano lava bombs. They wreck village walls in range
-//    (most/all segments); the village stays exposed for a vulnerable window, then the Thronglets rush to repair
+//  * storms: hurricanes along the coast, tornadoes inland, plus volcano lava bombs. They wreck village walls and buildings in range
+//    (most/all wall segments, and the huts inside); the village stays exposed for a vulnerable window, then the Thronglets rush to repair
 // Everything here is drawn procedurally by render2d.js (no new art files).
 import { W, D, B, RG } from './world.js';
 import { REPAIR_DUSK } from './sim.js';
@@ -86,10 +86,11 @@ export const DisasterMixin = {
       for (const id of E.evac) { const tr = this.tribes[id]; if (!tr || !tr.alive) continue; for (const f of tr.farms) if (f.stage >= 0) { f.stage = -1; f.timer = 0; this.setCrop(f); }
         }
       const Vcfg = STORM_DMG.volcano;
-      for (const tr of this.villages()) { const d = dist(tr.cx, tr.cz, E.x, E.z), R = E.R + Vcfg.extraR; if (!tr.wall || !tr.wall.done || d > R) continue;
-        const close = d <= E.R ? 1 - d / Math.max(1, E.R) : 0, pr = d <= E.R ? Vcfg.prNear : Vcfg.prFar * Math.max(0, 1 - (d - E.R) / Vcfg.extraR), nb = d <= E.R ? Vcfg.nbNear : Vcfg.nbFar;
+      for (const tr of this.villages()) { const d = dist(tr.cx, tr.cz, E.x, E.z), R = E.R + Vcfg.extraR; if (d > R) continue;
+        const pr = d <= E.R ? Vcfg.prNear : Vcfg.prFar * Math.max(0, 1 - (d - E.R) / Vcfg.extraR), nb = d <= E.R ? Vcfg.nbNear : Vcfg.nbFar;
         const n = this.smashWalls(tr, 'lava bombs', tr.cx, tr.cz, RING_R + 4, pr, nb);
-        if (n) this.log(`Lava bombs smashed ${n} gap${n > 1 ? 's' : ''} in the walls of ${tr.name}${E.evac.includes(tr.id) ? ' and buried its fields in ash' : ''}.`, 'disaster'); } }
+        const b = this.smashBuildings(tr, 'lava bombs', tr.cx, tr.cz, RING_R + 4, pr);
+        if (n || b) this.log(`Lava bombs smashed ${n ? n + ' gap' + (n > 1 ? 's' : '') + ' in the walls' : ''}${n && b ? ' and ' : ''}${b ? 'flattened ' + b + ' hut' + (b > 1 ? 's' : '') : ''} of ${tr.name}${E.evac.includes(tr.id) ? ' and buried its fields in ash' : ''}.`, 'disaster'); } }
     if (E.phase === 'erupt') { this.volcanoErupt = true;
       if (this.tick % 5 === 0) for (const e of this.thronglets()) { if (e.evac || e.inHut || e.held || e.bcu) continue; if (dist(e.x, e.z, E.x, E.z) < E.R * 0.45) { e.fear = 100; e.hp -= 1.2; if (e.hp <= 0) this.die(e, `${e.name}${this.ofV(e)} was buried in ash on the slopes of Mount Cinderwrath.`); } }
       if (el >= ERUPT.WARN + ERUPT.ERUPT) { E.phase = 'clear'; this.volcanoErupt = false; this.log(`The eruption is dying down. Ash drifts over the ${E.evac.length ? 'empty villages' : 'slopes'} as the lava cools.`, 'disaster'); } }
@@ -136,13 +137,16 @@ export const DisasterMixin = {
     if (cfg.R && S.R !== cfg.R && S.wreck) S.R = cfg.R;
     // v0.14.2: when the storm covers the target palisade, smash the whole ring from the village centre (god-mode and natural storms share this path)
     const T = this.tribes[S.target];
-    if (S.phase === 'active' && !S.struck && T && T.wall && T.wall.done && dist(T.cx, T.cz, S.x, S.z) <= Math.max(3, S.R - RING_R + 1)) {
+    if (S.phase === 'active' && !S.struck && T && dist(T.cx, T.cz, S.x, S.z) <= Math.max(3, S.R - RING_R + 1)) {
       const n = this.smashWalls(T, S.kind, T.cx, T.cz, S.R, cfg.pr, cfg.nb);
-      if (n) { S.struck = true; S.hit[T.id] = (S.hit[T.id] || 0) + n; this.log(`${S.kind === 'tornado' ? 'The tornado' : 'Hurricane winds'} ${S.kind === 'tornado' ? 'rips through' : 'batter'} the walls of ${T.name}!`, 'disaster'); } }
+      const b = this.smashBuildings(T, S.kind, T.cx, T.cz, S.R, cfg.pr);
+      if (n || b) { S.struck = true; S.hit[T.id] = (S.hit[T.id] || 0) + n; (S.hitBld || (S.hitBld = {}))[T.id] = b; this.log(`${S.kind === 'tornado' ? 'The tornado' : 'Hurricane winds'} ${S.kind === 'tornado' ? 'rips through' : 'batter'} the walls and huts of ${T.name}!`, 'disaster'); } }
     if (this.tick % 4 === 0) { const cap = cfg.cap, pr = cfg.pr, nb = cfg.nb;
-      for (const tr of this.tribes) { if (!tr.alive || !tr.wall || !tr.wall.done || dist(tr.cx, tr.cz, S.x, S.z) > S.R + RING_R + 1) continue; const h = S.hit[tr.id] || 0; if (h >= cap) continue; let n = h;
-        for (const c of tr.wall.cells) { if (n >= cap) break; const d = dist(c.x + 0.5, c.z + 0.5, S.x, S.z); if (d > S.R) continue; if (this.r() < pr * (1 - 0.2 * d / S.R) && this.hitWall(tr, c, nb)) n++; }
-        if (n > h) { if (!h) this.log(`${S.kind === 'tornado' ? 'The tornado' : 'Hurricane winds'} ${S.kind === 'tornado' ? 'rips through' : 'batter'} the walls of ${tr.name}!`, 'disaster'); S.hit[tr.id] = n; if (n) this.markVulnerable(tr, S.kind); } }
+      for (const tr of this.tribes) { if (!tr.alive || dist(tr.cx, tr.cz, S.x, S.z) > S.R + RING_R + 1) continue;
+        if (tr.wall && tr.wall.done) { const h = S.hit[tr.id] || 0; if (h < cap) { let n = h;
+          for (const c of tr.wall.cells) { if (n >= cap) break; const d = dist(c.x + 0.5, c.z + 0.5, S.x, S.z); if (d > S.R) continue; if (this.r() < pr * (1 - 0.2 * d / S.R) && this.hitWall(tr, c, nb)) n++; }
+          if (n > h) { if (!h) this.log(`${S.kind === 'tornado' ? 'The tornado' : 'Hurricane winds'} ${S.kind === 'tornado' ? 'rips through' : 'batter'} the walls of ${tr.name}!`, 'disaster'); S.hit[tr.id] = n; if (n) this.markVulnerable(tr, S.kind); } } }
+        if (!(S.hitBld && S.hitBld[tr.id])) { const b = this.smashBuildings(tr, S.kind, S.x, S.z, S.R, pr); if (b) (S.hitBld || (S.hitBld = {}))[tr.id] = b; } }
       // repairs wait for the vulnerable window (repairDueTick); don't start them the moment the storm drifts off
       for (const e of this.ents) { if (!e.alive || e.held || e.inHut || e.inMansion || e.hideout || e.kind === 'p' || e.kind === 'm') continue; const d = dist(e.x, e.z, S.x, S.z); if (d > S.R + 2) continue;
         if (e.kind === 't') { e.fear = 100; if (!e.evac && (!e.act || e.act.type !== 'flee')) { const a = Math.atan2(e.z - S.z, e.x - S.x); e.act = { type: 'flee', x: e.x + Math.cos(a) * 12, z: e.z + Math.sin(a) * 12, t: 30 }; }
@@ -170,6 +174,21 @@ export const DisasterMixin = {
   smashWalls(tr, cause, sx, sz, R, pr, nb) { if (!tr || !tr.wall || !tr.wall.done) return 0; let n = 0;
     for (const c of tr.wall.cells) { const d = dist(c.x + 0.5, c.z + 0.5, sx, sz); if (R != null && d > R) continue; const fall = R ? (1 - 0.2 * d / R) : 1; if (this.r() < pr * fall && this.hitWall(tr, c, nb)) n++; }
     if (n) this.markVulnerable(tr, cause); return n; },
+  // v0.14.4: flatten in-range village huts (plank/thatch/stone), evict anyone inside, leave rubble. Same pr/radius as the wall smash.
+  smashBuildings(tr, cause, sx, sz, R, pr) { if (!tr || !tr.huts || !tr.huts.length) return 0; let n = 0; const kept = [];
+    for (const h of tr.huts) { const d = dist(h.x + 0.5, h.z + 0.5, sx, sz); if (R != null && d > R) { kept.push(h); continue; } const fall = R ? (1 - 0.2 * d / R) : 1; if (this.r() >= pr * fall) { kept.push(h); continue; } this.wreckHut(tr, h); n++; }
+    if (n) { tr.huts = kept; this.assignHomes(tr); this.stats.stormHuts = (this.stats.stormHuts || 0) + n; } return n; },
+  wreckHut(tr, h) {
+    for (const id of [...(h.occ || [])]) { const e = this.byId.get(id); if (e && e.alive) this.leaveHut(e, true); }
+    for (const e of this.ents) { if (e.home === h) e.home = null; if (e.act && e.act.h === h) { if (e.inHut === h) this.leaveHut(e, true); else e.act = { type: 'flee', x: e.x + this.rnd(-8, 8), z: e.z + this.rnd(-8, 8), t: 24 }; } }
+    tr.jobs = (tr.jobs || []).filter(j => !(j.hut === h && (j.type === 'upgrade' || j.type === 'hut')));
+    const w = this.w, HUT_B = new Set([B.PLANK, B.COBBLE, B.THATCH, B.TORCH]);
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const x = h.x + dx, z = h.z + dz; if (!w.inb(x, z)) continue; const g = w.ground[z * W + x];
+      for (let y = 0; y < 8; y++) { const b = w.get(x, g + y, z); if (!HUT_B.has(b)) continue; w.set(x, g + y, z, 0); if (b === B.COBBLE) tr.stock.stone += 1; else if (b === B.THATCH) tr.stock.reed += 1; else tr.stock.wood += 1; }
+      if (w.rubble) w.rubble[z * W + x] = 1; (this.fx || (this.fx = [])).push({ k: 'debris', x: x + 0.5, z: z + 0.5, tick: this.tick }); }
+    if (h.doorDir) { const tx = h.x + h.doorDir[0] * 2 + (h.doorDir[1] || 0), tz = h.z + h.doorDir[1] * 2 + (h.doorDir[0] || 0); if (w.inb(tx, tz) && w.get(tx, w.ground[tz * W + tx], tz) === B.TORCH) { w.set(tx, w.ground[tz * W + tx], tz, 0); tr.stock.wood += 1; } }
+  },
+  hutHurt(tr) { if (!tr) return { huts: 0 }; return { huts: (tr.huts || []).length }; },
   markVulnerable(tr, cause) { if (tr.wall) tr.wall.breached = true; tr.dmgCause = cause; tr.vulnerableUntil = Math.max(tr.vulnerableUntil || 0, this.tick + VULN.DELAY); },
   isVulnerable(tr) { return !!(tr.wall && tr.wall.breached && (tr.vulnerableUntil || 0) > this.tick); },
   // test/debug: count missing wall blocks and flattened segments
